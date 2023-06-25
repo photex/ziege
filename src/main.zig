@@ -3,11 +3,25 @@ const path = std.fs.path;
 const hash = std.hash;
 const assert = std.debug.assert;
 
+const Args = [][:0]u8;
+
 const zigBinHash = hash.Crc32.hash("zig");
 
-fn zig_mode() !void {}
+fn parse_args(args: Args) !void {
+    for (args[1..], 1..) |arg, index| {
+        std.debug.print("{d}: {s}\n", .{ index, arg });
+    }
+}
 
-fn ziege_mode() !void {}
+fn zig_mode(args: Args) !void {
+    std.debug.print("We are running in zig mode!\n", .{});
+    try parse_args(args);
+}
+
+fn ziege_mode(args: Args) !void {
+    std.debug.print("We are running in goat mode.\n", .{});
+    try parse_args(args);
+}
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -24,13 +38,8 @@ pub fn main() !void {
 
     const binName = path.basename(args[0]);
 
-    if (hash.Crc32.hash(binName) == zigBinHash) {
-        std.debug.print("We are running in zig mode!\n", .{});
-    } else {
-        std.debug.print("We are running in goat mode.\n", .{});
-    }
-
-    for (args[1..], 1..) |arg, index| {
-        std.debug.print("{d}: {s}\n", .{ index, arg });
+    switch (hash.Crc32.hash(binName)) {
+        zigBinHash => try zig_mode(args),
+        else => try ziege_mode(args),
     }
 }

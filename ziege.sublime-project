@@ -1,0 +1,27 @@
+{
+	"folders":
+	[
+		{
+			"path": ".",
+			"index_exclude_patterns": [
+				"zig-cache"
+			]
+		}
+	],
+	"build_systems": [
+		{
+			"name": "Build",
+			"working_dir": "$project_path",
+			"cmd": ["zig", "build"],
+			"file_regex": "^\\s*([^:]+):(\\d+):(\\d+):\\s*(.*)$",
+			"variants": [
+				{
+					"name": "Release",
+					"cmd": ["zig", "build", "-Doptimize=ReleaseFast"]
+				}
+			],
+			"target": "terminus_exec",
+            "cancel": "terminus_cancel_build",
+		}
+	]
+}

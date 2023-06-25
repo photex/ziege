@@ -1,2 +1,11 @@
+# Zig build output
 zig-out/
 zig-cache/
+
+
+# Sublime text related
+*.sublime-workspace
+
+
+# test symlink
+/zig
