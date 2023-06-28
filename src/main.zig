@@ -14,43 +14,45 @@ const Mode = enum {
 
 const Args = [][:0]u8;
 
-fn define_app() type {
-    return struct {
-        const Self = @This();
-        const log = std.log.scoped(.ziege);
+const Foo = struct {
+    const log = std.log.scoped(.foo);
+    bar: u32,
+};
 
-        allocator: Allocator,
-        args: Args,
-        mode: Mode,
+const App = struct {
+    const Self = @This();
+    const log = std.log.scoped(.ziege);
 
-        pub fn init(allocator: Allocator) !Self {
-            Self.log.debug("Initializing...", .{});
-            var args = try std.process.argsAlloc(allocator);
+    allocator: Allocator,
+    args: Args,
+    mode: Mode,
 
-            const zigBinNameHash = comptime hash.Crc32.hash("zig");
-            const zlsBinNameHash = comptime hash.Crc32.hash("zls");
+    pub fn init(allocator: Allocator) !Self {
+        Self.log.debug("Initializing...", .{});
+        var args = try std.process.argsAlloc(allocator);
 
-            const binName = path.basename(args[0]);
-            const binNameHash = hash.Crc32.hash(binName);
+        const zigBinNameHash = comptime hash.Crc32.hash("zig");
+        const zlsBinNameHash = comptime hash.Crc32.hash("zls");
 
-            return Self {
-                .allocator = allocator,
-                .args = args,
-                .mode = switch (binNameHash) {
-                    zigBinNameHash => .Zig,
-                    zlsBinNameHash => .Zls,
-                    else => .Ziege,
-                },
-            };
-        }
+        const binName = path.basename(args[0]);
+        const binNameHash = hash.Crc32.hash(binName);
 
-        pub fn deinit(self: *Self) !void {
-            Self.log.debug("Cleaning up...", .{});
-            std.process.argsFree(self.allocator, self.args);
-        }
-    };
-}
-const App = define_app();
+        return Self {
+            .allocator = allocator,
+            .args = args,
+            .mode = switch (binNameHash) {
+                zigBinNameHash => .Zig,
+                zlsBinNameHash => .Zls,
+                else => .Ziege,
+            },
+        };
+    }
+
+    pub fn deinit(self: *Self) !void {
+        Self.log.debug("Cleaning up...", .{});
+        std.process.argsFree(self.allocator, self.args);
+    }
+};
 
 // For args that start with '+' we interpret as arguments
 // for us rather than the tools we proxy.
@@ -72,7 +74,7 @@ fn zig_mode(app: App) !void {
 
     try zig.spawn();
 
-    App.log.debug("spawned {d}", .{zig.id});
+    App.log.debug("Spawned {d}", .{zig.id});
 
     const term = try zig.wait();
     if (term != .Exited) {
