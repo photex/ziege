@@ -3,11 +3,29 @@
 	[
 		{
 			"path": ".",
-			"index_exclude_patterns": [
+			"folder_exclude_patterns": [
 				"zig-cache"
+			],
+			"index_exclude_patterns": [
+				"zig-out"
 			]
 		}
 	],
+	"settings": {
+	    "zig.build.on_save": false,
+	    "zig.fmt.on_save": false,
+	    "zig.fmt.mode": "file",
+	    "zig.quiet": true,
+	    "LSP": {
+	    	"clients": {
+		        "zig": {
+		            "command": ["$project_path/zls"],
+		            "enabled": true,
+		            "selector": "source.zig"
+		        }
+		    }
+	    }
+	},
 	"build_systems": [
 		{
 			"name": "Build",
@@ -21,7 +39,7 @@
 				}
 			],
 			"target": "terminus_exec",
-            "cancel": "terminus_cancel_build",
+            "cancel": "terminus_cancel_build"
 		}
 	]
 }
