@@ -28,8 +28,6 @@ const App = struct {
         const binName = path.basename(args[0]);
         const binNameHash = hash.Crc32.hash(binName);
 
-        //const mode: Mode = if (binNameHash == zigBinNameHash) .Zig else .Ziege;
-
         return App {
             .allocator = allocator,
             .args = args,

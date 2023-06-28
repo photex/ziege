@@ -7,5 +7,6 @@ zig-cache/
 *.sublime-workspace
 
 
-# test symlink
+# test symlinks
 /zig
+/zls
