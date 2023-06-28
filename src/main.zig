@@ -13,11 +13,7 @@ const Mode = enum {
 };
 
 const Args = [][:0]u8;
-
-const Foo = struct {
-    const log = std.log.scoped(.foo);
-    bar: u32,
-};
+const ArgList = std.ArrayList([:0]const u8);
 
 const App = struct {
     const Self = @This();
@@ -56,20 +52,33 @@ const App = struct {
 
 // For args that start with '+' we interpret as arguments
 // for us rather than the tools we proxy.
-fn extract_args(app: App) !void {
+fn extract_args(app: App, argv: *ArgList) !void {
+    try argv.ensureTotalCapacity(app.args.len);
     for (app.args[1..]) |arg| {
         if (arg[0] == '+') {
             App.log.debug("Found an arg for ziege: {s}", .{arg});
+        } else {
+            try argv.append(arg);
         }
     }
 }
 
 fn zig_mode(app: App) !void {
     App.log.debug("We are running in zig mode!", .{});
-    try extract_args(app);
+
+    const zigBin = "/home/chip/.local/bin/zig";
+
+    var argv = ArgList.init(app.allocator);
+    defer argv.deinit();
+    try argv.append(zigBin);
+
+    try extract_args(app, &argv);
+
+    const child_argv = try argv.toOwnedSlice();
+    defer app.allocator.free(child_argv);
 
     var zig = std.ChildProcess.init(
-        &.{"/home/chip/.local/bin/zig", "help"},
+        child_argv,
         app.allocator);
 
     try zig.spawn();
@@ -84,19 +93,26 @@ fn zig_mode(app: App) !void {
 
 fn zls_mode(app: App) !void {
     App.log.debug("We are running in zls mode!", .{});
-    try extract_args(app);
+    var argv = ArgList.init(app.allocator);
+    defer argv.deinit();
+    try extract_args(app, &argv);
 }
 
 fn ziege_mode(app: App) !void {
     App.log.debug("We are running in goat mode.", .{});
-    try extract_args(app);
+    var argv = ArgList.init(app.allocator);
+    defer argv.deinit();
+    try extract_args(app, &argv);
 }
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer {
         const stat = gpa.deinit();
-        assert(stat != .leak);
+        if (stat == .leak) {
+            std.log.err("Memory leak detected!", .{});
+            std.process.exit(1);
+        }
     }
 
     var app = try App.init(gpa.allocator());
