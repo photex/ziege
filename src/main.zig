@@ -5,17 +5,12 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 const assert = std.debug.assert;
 
-
-const Mode = enum {
-    Zig,
-    Zls,
-    Ziege
-};
+const Mode = enum { Zig, Zls, Ziege };
 
 const Args = [][:0]u8;
 const ArgList = std.ArrayList([:0]const u8);
 
-const App = struct {
+const Launcher = struct {
     const Self = @This();
     const log = std.log.scoped(.ziege);
 
@@ -33,7 +28,7 @@ const App = struct {
         const binName = path.basename(args[0]);
         const binNameHash = hash.Crc32.hash(binName);
 
-        return Self {
+        return Self{
             .allocator = allocator,
             .args = args,
             .mode = switch (binNameHash) {
@@ -52,19 +47,19 @@ const App = struct {
 
 // For args that start with '+' we interpret as arguments
 // for us rather than the tools we proxy.
-fn extract_args(app: App, argv: *ArgList) !void {
+fn extract_args(app: Launcher, argv: *ArgList) !voidd {
     try argv.ensureTotalCapacity(app.args.len);
     for (app.args[1..]) |arg| {
         if (arg[0] == '+') {
-            App.log.debug("Found an arg for ziege: {s}", .{arg});
+            Launcher.log.debug("Found an arg for ziege: {s}", .{arg});
         } else {
             try argv.append(arg);
         }
     }
 }
 
-fn zig_mode(app: App) !void {
-    App.log.debug("We are running in zig mode!", .{});
+fn zig_mode(app: Launcher) !void {
+    Launcher.log.debug("We are running in zig mode!", .{});
 
     const zigBin = "/home/chip/.local/bin/zig";
 
@@ -74,32 +69,27 @@ fn zig_mode(app: App) !void {
 
     try extract_args(app, &argv);
 
-    const child_argv = try argv.toOwnedSlice();
-    defer app.allocator.free(child_argv);
-
-    var zig = std.ChildProcess.init(
-        child_argv,
-        app.allocator);
+    var zig = std.ChildProcess.init(argv.items, app.allocator);
 
     try zig.spawn();
 
-    App.log.debug("Spawned {d}", .{zig.id});
+    Launcher.log.debug("Spawned {d}", .{zig.id});
 
     const term = try zig.wait();
     if (term != .Exited) {
-        App.log.err("There was an error running zig.", .{});
+        Launcher.log.err("There was an error running zig.", .{});
     }
 }
 
-fn zls_mode(app: App) !void {
-    App.log.debug("We are running in zls mode!", .{});
+fn zls_mode(app: Launcher) !void {
+    Launcher.log.debug("We are running in zls mode!", .{});
     var argv = ArgList.init(app.allocator);
     defer argv.deinit();
     try extract_args(app, &argv);
 }
 
-fn ziege_mode(app: App) !void {
-    App.log.debug("We are running in goat mode.", .{});
+fn ziege_mode(app: Launcher) !void {
+    Launcher.log.debug("We are running in goat mode.", .{});
     var argv = ArgList.init(app.allocator);
     defer argv.deinit();
     try extract_args(app, &argv);
@@ -115,7 +105,7 @@ pub fn main() !void {
         }
     }
 
-    var app = try App.init(gpa.allocator());
+    var app = try Launcher.init(gpa.allocator());
     defer app.deinit() catch @panic("Unrecoverable error during shutdown!");
 
     switch (app.mode) {
