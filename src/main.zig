@@ -8,6 +8,7 @@ const builtin = @import("builtin");
 const native_os = builtin.target.os.tag;
 
 const Mode = enum { Zig, Zls, Ziege };
+const Command = enum { Update };
 
 const Args = [][:0]u8;
 const ArgList = std.ArrayList([:0]const u8);
@@ -15,10 +16,10 @@ const ArgList = std.ArrayList([:0]const u8);
 const log = std.log.scoped(.ziege);
 
 fn getHomeDirectory(allocator: Allocator) ![]u8 {
-    switch (native_os) {
-        .windows => return try std.process.getEnvVarOwned(allocator, "USERPROFILE"),
-        else => return try std.process.getEnvVarOwned(allocator, "HOME"),
-    }
+    return switch (native_os) {
+        .windows => try std.process.getEnvVarOwned(allocator, "USERPROFILE"),
+        else => try std.process.getEnvVarOwned(allocator, "HOME"),
+    };
 }
 
 const Locations = struct {
@@ -95,18 +96,18 @@ fn extract_args(app: Launcher, argv: *ArgList) !void {
     }
 }
 
-fn zig_mode(app: Launcher) !void {
+fn zig_mode(launcher: Launcher) !void {
     log.debug("We are running in zig mode!", .{});
 
     const zigBin = "/home/chip/.local/bin/zig";
 
-    var argv = ArgList.init(app.allocator);
+    var argv = ArgList.init(launcher.allocator);
     defer argv.deinit();
     try argv.append(zigBin);
 
-    try extract_args(app, &argv);
+    try extract_args(launcher, &argv);
 
-    var zig = std.ChildProcess.init(argv.items, app.allocator);
+    var zig = std.ChildProcess.init(argv.items, launcher.allocator);
 
     try zig.spawn();
 
@@ -137,19 +138,20 @@ pub fn main() !void {
     defer {
         const stat = gpa.deinit();
         if (stat == .leak) {
-            std.log.err("Memory leak detected!", .{});
+            log.err("Memory leak detected!", .{});
             std.process.exit(1);
         }
     }
 
-    var app = try Launcher.init(gpa.allocator());
-    defer app.deinit() catch @panic("Unrecoverable error during shutdown!");
+    var launcher = try Launcher.init(gpa.allocator());
+    defer launcher.deinit() catch @panic("Unrecoverable error during shutdown!");
 
-    log.debug("HOME = {s}", .{app.locations.home});
+    log.debug("HOME = {s}", .{launcher.locations.home});
+    log.debug("Toolchains: {s}", .{launcher.locations.toolchains});
 
-    switch (app.mode) {
-        .Zig => try zig_mode(app),
-        .Zls => try zls_mode(app),
-        .Ziege => try ziege_mode(app),
+    switch (launcher.mode) {
+        .Zig => try zig_mode(launcher),
+        .Zls => try zls_mode(launcher),
+        .Ziege => try ziege_mode(launcher),
     }
 }
