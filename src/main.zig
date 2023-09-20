@@ -2,24 +2,81 @@ const std = @import("std");
 const path = std.fs.path;
 const hash = std.hash;
 const mem = std.mem;
+const json = std.json;
 const Allocator = mem.Allocator;
 const assert = std.debug.assert;
 const builtin = @import("builtin");
-const native_os = builtin.target.os.tag;
+
+const download_index_url = "https://ziglang.org/download/index.json";
+const zig_bin_name_hash = hash.Crc32.hash("zig");
+const zls_bin_name_hash = hash.Crc32.hash("zls");
 
 const Mode = enum { Zig, Zls, Ziege };
 const Command = enum { Update };
+
+const Dir = std.fs.Dir;
+const File = std.fs.File;
 
 const Args = [][:0]u8;
 const ArgList = std.ArrayList([:0]const u8);
 
 const log = std.log.scoped(.ziege);
 
-fn getHomeDirectory(allocator: Allocator) ![]u8 {
-    return switch (native_os) {
-        .windows => try std.process.getEnvVarOwned(allocator, "USERPROFILE"),
-        else => try std.process.getEnvVarOwned(allocator, "HOME"),
-    };
+const arch = switch (builtin.cpu.arch) {
+    .x86_64 => "x86_64",
+    .aarch64 => "aarch64",
+    else => @compileError("Unsupported CPU Architecture"),
+};
+
+const os = switch (builtin.os.tag) {
+    .windows => "windows",
+    .linux => "linux",
+    .macos => "macos",
+    else => @compileError("Unsupported OS"),
+};
+
+const url_platform = os ++ "-" ++ arch;
+const json_platform = arch ++ "-" ++ os;
+const archive_ext = if (builtin.os.tag == .windows) "zip" else "tar.xz";
+const home_var = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
+
+fn readFile(allocator: Allocator, file_path: []const u8) ![]u8 {
+    var cwd = std.fs.cwd();
+    log.warn("**TODO** we still assume that the file being read is in CWD.", .{});
+    return try cwd.readFileAlloc(allocator, file_path, std.math.maxInt(usize));
+}
+
+fn loadToolchainIndex(allocator: Allocator) !json.Parsed(json.Value) {
+    log.warn("**TODO** toolchain index is still only read from disk at cwd.", .{});
+    const index_text = try readFile(allocator, "index.json");
+    return try json.parseFromSlice(std.json.Value, allocator, index_text, .{});
+}
+
+fn findTargetZigVersion(allocator: Allocator) ![]u8 {
+    log.warn("**TODO** zig toolchain version is only search for in cwd.", .{});
+    return try readFile(allocator, ".zigversion");
+}
+
+// For args that start with '+' we interpret as arguments
+// for us rather than the tools we proxy.
+fn extract_args(allocator: Allocator, launcher_args: *ArgList, argv: *ArgList) !void {
+    var args = try std.process.argsAlloc(allocator);
+    defer allocator.free(args);
+
+    try argv.ensureTotalCapacity(args.len);
+    try launcher_args.ensureTotalCapacity(args.len);
+
+    // We preserve the path to the executable that got run in the launcher
+    // args so that we can figure out what mode to operate in etc.
+    try launcher_args.append(args[0]);
+
+    for (args[1..]) |arg| {
+        if (arg[0] == '+') {
+            try launcher_args.append(arg);
+        } else {
+            try argv.append(arg);
+        }
+    }
 }
 
 const Locations = struct {
@@ -29,9 +86,12 @@ const Locations = struct {
     toolchains: []u8,
 
     pub fn init(allocator: Allocator) !Self {
-        const home = try getHomeDirectory(allocator);
+        const home = try std.process.getEnvVarOwned(allocator, home_var);
         const config = try std.fs.path.join(allocator, &.{ home, ".zig" });
         const toolchains = try std.fs.path.join(allocator, &.{ config, "toolchains" });
+
+        log.debug("CONFIG: {s}", .{config});
+        log.debug("TOOLCHAINS: {s}", .{toolchains});
         return Self{
             .home = home,
             .config = config,
@@ -50,29 +110,39 @@ const Launcher = struct {
     const Self = @This();
 
     allocator: Allocator,
-    args: Args,
+    launcher_args: ArgList,
+    argv: ArgList,
     mode: Mode,
     locations: Locations,
 
     pub fn init(allocator: Allocator) !Self {
         log.debug("Initializing...", .{});
-        var args = try std.process.argsAlloc(allocator);
 
-        const zigBinNameHash = comptime hash.Crc32.hash("zig");
-        const zlsBinNameHash = comptime hash.Crc32.hash("zls");
+        var launcher_args = ArgList.init(allocator);
+        var argv = ArgList.init(allocator);
 
-        const binName = path.basename(args[0]);
-        const binNameHash = hash.Crc32.hash(binName);
+        try extract_args(allocator, &launcher_args, &argv);
+
+        const bin_name = path.basename(launcher_args.items[0]);
+        const bin_name_hash = hash.Crc32.hash(bin_name);
+
+        const mode: Mode = switch (bin_name_hash) {
+            zig_bin_name_hash => .Zig,
+            zls_bin_name_hash => .Zls,
+            else => .Ziege,
+        };
+
+        var locations = try Locations.init(allocator);
+
+        const index = try loadToolchainIndex(allocator);
+        _ = index;
 
         return Self{
             .allocator = allocator,
-            .args = args,
-            .mode = switch (binNameHash) {
-                zigBinNameHash => .Zig,
-                zlsBinNameHash => .Zls,
-                else => .Ziege,
-            },
-            .locations = try Locations.init(allocator),
+            .launcher_args = launcher_args,
+            .argv = argv,
+            .mode = mode,
+            .locations = locations,
         };
     }
 
@@ -80,21 +150,10 @@ const Launcher = struct {
         log.debug("Cleaning up...", .{});
         std.process.argsFree(self.allocator, self.args);
         self.locations.deinit(self.allocator);
+        self.launcher_args.deinit();
+        self.argv.deinit();
     }
 };
-
-// For args that start with '+' we interpret as arguments
-// for us rather than the tools we proxy.
-fn extract_args(app: Launcher, argv: *ArgList) !void {
-    try argv.ensureTotalCapacity(app.args.len);
-    for (app.args[1..]) |arg| {
-        if (arg[0] == '+') {
-            log.debug("Found an arg for ziege: {s}", .{arg});
-        } else {
-            try argv.append(arg);
-        }
-    }
-}
 
 fn zig_mode(launcher: Launcher) !void {
     log.debug("We are running in zig mode!", .{});
@@ -119,20 +178,6 @@ fn zig_mode(launcher: Launcher) !void {
     }
 }
 
-fn zls_mode(app: Launcher) !void {
-    log.debug("We are running in zls mode!", .{});
-    var argv = ArgList.init(app.allocator);
-    defer argv.deinit();
-    try extract_args(app, &argv);
-}
-
-fn ziege_mode(app: Launcher) !void {
-    log.debug("We are running in goat mode.", .{});
-    var argv = ArgList.init(app.allocator);
-    defer argv.deinit();
-    try extract_args(app, &argv);
-}
-
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer {
@@ -145,13 +190,4 @@ pub fn main() !void {
 
     var launcher = try Launcher.init(gpa.allocator());
     defer launcher.deinit() catch @panic("Unrecoverable error during shutdown!");
-
-    log.debug("HOME = {s}", .{launcher.locations.home});
-    log.debug("Toolchains: {s}", .{launcher.locations.toolchains});
-
-    switch (launcher.mode) {
-        .Zig => try zig_mode(launcher),
-        .Zls => try zls_mode(launcher),
-        .Ziege => try ziege_mode(launcher),
-    }
 }
