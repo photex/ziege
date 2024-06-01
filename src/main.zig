@@ -19,7 +19,7 @@ const Command = enum { Update, Fetch, SetDefault };
 const Dir = std.fs.Dir;
 const File = std.fs.File;
 
-const ArgList = std.ArrayList([:0]const u8);
+const ArgList = std.ArrayList([:0]u8);
 
 const log = std.log.scoped(.ziege);
 
@@ -60,25 +60,28 @@ fn findTargetZigVersion(allocator: Allocator) ![]u8 {
     return try readFile(allocator, ".zigversion");
 }
 
-// For args that start with '+' we interpret as arguments
-// for us rather than the tools we proxy.
-fn extract_args(allocator: Allocator, launcher_args: *ArgList, argv: *ArgList) !void {
-    var args = try std.process.argsAlloc(allocator);
+/// For args that start with '+' we interpret as arguments
+/// for us rather than the tools we proxy.
+fn extract_args(allocator: Allocator, launcher_args: *ArgList, forward_args: *ArgList) !void {
+    const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
-    try argv.ensureTotalCapacity(args.len);
+    try forward_args.ensureTotalCapacity(args.len);
     try launcher_args.ensureTotalCapacity(args.len);
 
     // We preserve the path to the executable that got run in the launcher
     // args so that we can figure out what mode to operate in etc.
-    try launcher_args.append(args[0]);
-    try argv.append(args[0]);
+    const launcher = try allocator.allocSentinel(u8, args[0].len, 0);
+    @memcpy(launcher, args[0]);
+    try launcher_args.append(launcher);
 
     for (args[1..]) |arg| {
+        const copy = try allocator.allocSentinel(u8, arg.len, 0);
+        @memcpy(copy, arg);
         if (arg[0] == '+') {
-            try launcher_args.append(arg);
+            try launcher_args.append(copy);
         } else {
-            try argv.append(arg);
+            try forward_args.append(copy);
         }
     }
 }
@@ -115,7 +118,7 @@ const Launcher = struct {
 
     allocator: Allocator,
     launcher_args: ArgList,
-    argv: ArgList,
+    forward_args: ArgList,
     mode: Mode,
     locations: Locations,
 
@@ -123,9 +126,9 @@ const Launcher = struct {
         log.debug("Initializing...", .{});
 
         var launcher_args = ArgList.init(allocator);
-        var argv = ArgList.init(allocator);
+        var forward_args = ArgList.init(allocator);
 
-        try extract_args(allocator, &launcher_args, &argv);
+        try extract_args(allocator, &launcher_args, &forward_args);
 
         const bin_name = path.basename(launcher_args.items[0]);
         const bin_name_hash = hash.Crc32.hash(bin_name);
@@ -138,13 +141,13 @@ const Launcher = struct {
 
         const locations = try Locations.init(allocator);
 
-        const index = try loadToolchainIndex(allocator);
-        _ = index;
+        // const index = try loadToolchainIndex(allocator);
+        // _ = index;
 
         return Self{
             .allocator = allocator,
             .launcher_args = launcher_args,
-            .argv = argv,
+            .forward_args = forward_args,
             .mode = mode,
             .locations = locations,
         };
@@ -155,7 +158,7 @@ const Launcher = struct {
         //std.process.argsFree(self.allocator, self.argv);
         self.locations.deinit(self.allocator);
         self.launcher_args.deinit();
-        self.argv.deinit();
+        self.forward_args.deinit();
     }
 };
 
@@ -193,6 +196,5 @@ pub fn main() !void {
     }
 
     var launcher = try Launcher.init(gpa.allocator());
-
     defer launcher.deinit() catch @panic("Unrecoverable error during shutdown!");
 }
