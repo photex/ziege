@@ -7,34 +7,17 @@
             "label": "build",
             "type": "shell",
             "command": "zig build",
-            "problemMatcher": ["$zig"],
+            "problemMatcher": [
+                "$zig"
+            ],
             "group": {
                 "kind": "build",
                 "isDefault": true
             },
             "presentation": {
                 "echo": true,
-                "reveal": "always",
-                "focus": false,
-                "panel": "shared",
-                "showReuseMessage": false,
-                "clear": true
-            }
-        },
-        {
-            "label": "run",
-            "type": "shell",
-            "command": "zig build run",
-            "problemMatcher": [
-                "$zig"
-            ],
-            "group": {
-                "kind": "test",
-                "isDefault": true
-            },
-            "presentation": {
-                "echo": true,
-                "reveal": "always",
+                "reveal": "never",
+                "revealProblems": "onProblem",
                 "focus": false,
                 "panel": "shared",
                 "showReuseMessage": false,

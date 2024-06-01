@@ -7,17 +7,18 @@ const Allocator = mem.Allocator;
 const assert = std.debug.assert;
 const builtin = @import("builtin");
 
-const download_index_url = "https://ziglang.org/download/index.json";
+const zig_index_url = "https://ziglang.org/download/index.json";
 const zig_bin_name_hash = hash.Crc32.hash("zig");
+
+const zls_index_url = "https://zigtools-releases.nyc3.digitaloceanspaces.com/zls/index.json";
 const zls_bin_name_hash = hash.Crc32.hash("zls");
 
 const Mode = enum { Zig, Zls, Ziege };
-const Command = enum { Update };
+const Command = enum { Update, Fetch, SetDefault };
 
 const Dir = std.fs.Dir;
 const File = std.fs.File;
 
-const Args = [][:0]u8;
 const ArgList = std.ArrayList([:0]const u8);
 
 const log = std.log.scoped(.ziege);
@@ -40,20 +41,22 @@ const json_platform = arch ++ "-" ++ os;
 const archive_ext = if (builtin.os.tag == .windows) "zip" else "tar.xz";
 const home_var = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
 
+/// Read the contents of the file specified by file_path and return a u8 slice with it's contents.
 fn readFile(allocator: Allocator, file_path: []const u8) ![]u8 {
-    var cwd = std.fs.cwd();
-    log.warn("**TODO** we still assume that the file being read is in CWD.", .{});
-    return try cwd.readFileAlloc(allocator, file_path, std.math.maxInt(usize));
+    var file = try std.fs.openFileAbsolute(file_path, .{});
+    defer file.close();
+    return try file.readToEndAlloc(allocator, std.math.maxInt(usize));
 }
 
+/// Load a zig release index
 fn loadToolchainIndex(allocator: Allocator) !json.Parsed(json.Value) {
     log.warn("**TODO** toolchain index is still only read from disk at cwd.", .{});
-    const index_text = try readFile(allocator, "index.json");
+    const index_text = try readFile(allocator, "zig_index.json");
     return try json.parseFromSlice(std.json.Value, allocator, index_text, .{});
 }
 
 fn findTargetZigVersion(allocator: Allocator) ![]u8 {
-    log.warn("**TODO** zig toolchain version is only search for in cwd.", .{});
+    log.debug("**TODO** zig toolchain version is only search for in cwd.", .{});
     return try readFile(allocator, ".zigversion");
 }
 
@@ -61,7 +64,7 @@ fn findTargetZigVersion(allocator: Allocator) ![]u8 {
 // for us rather than the tools we proxy.
 fn extract_args(allocator: Allocator, launcher_args: *ArgList, argv: *ArgList) !void {
     var args = try std.process.argsAlloc(allocator);
-    defer allocator.free(args);
+    defer std.process.argsFree(allocator, args);
 
     try argv.ensureTotalCapacity(args.len);
     try launcher_args.ensureTotalCapacity(args.len);
@@ -69,6 +72,7 @@ fn extract_args(allocator: Allocator, launcher_args: *ArgList, argv: *ArgList) !
     // We preserve the path to the executable that got run in the launcher
     // args so that we can figure out what mode to operate in etc.
     try launcher_args.append(args[0]);
+    try argv.append(args[0]);
 
     for (args[1..]) |arg| {
         if (arg[0] == '+') {
@@ -132,7 +136,7 @@ const Launcher = struct {
             else => .Ziege,
         };
 
-        var locations = try Locations.init(allocator);
+        const locations = try Locations.init(allocator);
 
         const index = try loadToolchainIndex(allocator);
         _ = index;
@@ -148,7 +152,7 @@ const Launcher = struct {
 
     pub fn deinit(self: *Self) !void {
         log.debug("Cleaning up...", .{});
-        std.process.argsFree(self.allocator, self.args);
+        //std.process.argsFree(self.allocator, self.argv);
         self.locations.deinit(self.allocator);
         self.launcher_args.deinit();
         self.argv.deinit();
@@ -189,5 +193,6 @@ pub fn main() !void {
     }
 
     var launcher = try Launcher.init(gpa.allocator());
+
     defer launcher.deinit() catch @panic("Unrecoverable error during shutdown!");
 }

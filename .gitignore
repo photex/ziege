@@ -1,6 +1,7 @@
 # Zig build output
 zig-out/
 zig-cache/
+.zig-cache/
 
 
 # Sublime text related

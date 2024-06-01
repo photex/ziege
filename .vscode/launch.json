@@ -1,0 +1,13 @@
+{
+    "configurations": [
+        {
+            "name": "ziege",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceRoot}/zig-out/bin/ziege",
+            "args": [],
+            "environment": [],
+            "cwd": "${workspaceRoot}"
+        }
+    ]
+}

@@ -13,13 +13,12 @@
 	],
 	"settings": {
 	    "zig.build.on_save": false,
-	    "zig.fmt.on_save": false,
+	    "zig.fmt.on_save": true,
 	    "zig.fmt.mode": "file",
 	    "zig.quiet": true,
 	    "LSP": {
 	    	"clients": {
 		        "zig": {
-		            "command": ["$project_path/zls"],
 		            "enabled": true,
 		            "selector": "source.zig"
 		        }
