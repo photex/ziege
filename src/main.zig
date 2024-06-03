@@ -9,6 +9,16 @@ const http = std.http;
 const Allocator = mem.Allocator;
 const assert = std.debug.assert;
 
+const LinearFifo = std.fifo.LinearFifo;
+
+const default_zig_version = "master";
+
+const json_content_type = "application/json";
+const bin_content_type = "application/octet-stream";
+const gz_content_type = "application/gzip";
+const zip_content_type = "application/zip";
+const tar_content_type = "application/x-tar";
+
 const zig_index_url = "https://ziglang.org/download/index.json";
 const zig_bin_name_hash = hash.Crc32.hash("zig");
 
@@ -43,6 +53,12 @@ const json_platform = arch ++ "-" ++ os;
 const archive_ext = if (builtin.os.tag == .windows) "zip" else "tar.xz";
 const home_var = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
 
+const ZigVersion = union(enum) {
+    Master,
+    Stable,
+    Pinned: [32]u8,
+};
+
 /// For args that start with '+' we interpret as arguments
 /// for us rather than the tools we proxy.
 fn extract_args(allocator: Allocator, launcher_args: *ArgList, forward_args: *ArgList) !void {
@@ -69,35 +85,64 @@ fn extract_args(allocator: Allocator, launcher_args: *ArgList, forward_args: *Ar
 
 const Locations = struct {
     const Self = @This();
+
+    allocator: Allocator,
     home: []u8,
     config: []u8,
+    pkg_root: []u8,
     zig_pkgs: []u8,
     zls_pkgs: []u8,
+
+    zig_index_cache: []u8,
+    zls_index_cache: []u8,
 
     pub fn init(allocator: Allocator) !Self {
         const home = try std.process.getEnvVarOwned(allocator, home_var);
         const config = try std.fs.path.join(allocator, &.{ home, ".ziege" });
-        const zig_pkgs = try std.fs.path.join(allocator, &.{ config, "pkg", "zig" });
-        const zls_pkgs = try std.fs.path.join(allocator, &.{ config, "pkg", "zls" });
+        const pkg_root = try std.fs.path.join(allocator, &.{ config, "pkg" });
+        const zig_pkgs = try std.fs.path.join(allocator, &.{ pkg_root, "zig" });
+        const zig_index_cache = try std.fs.path.join(allocator, &.{ pkg_root, "zig", "index.json" });
+        const zls_pkgs = try std.fs.path.join(allocator, &.{ pkg_root, "zls" });
+        const zls_index_cache = try std.fs.path.join(allocator, &.{ pkg_root, "zls", "index.json" });
 
         log.debug("ZIEGE ROOT: {s}", .{config});
         log.debug("ZIG PACKAGES: {s}", .{zig_pkgs});
         log.debug("ZLS PACKAGES: {s}", .{zls_pkgs});
 
+        // TODO: This is quite a hack currently
+        var home_dir = try std.fs.openDirAbsolute(home, .{});
+        try home_dir.makePath(".ziege/pkg/zig");
+        try home_dir.makePath(".ziege/pkg/zls");
+        home_dir.close();
+
         return Self{
+            .allocator = allocator,
             .home = home,
             .config = config,
+            .pkg_root = pkg_root,
             .zig_pkgs = zig_pkgs,
             .zls_pkgs = zls_pkgs,
+            .zig_index_cache = zig_index_cache,
+            .zls_index_cache = zls_index_cache,
         };
     }
 
-    pub fn deinit(self: *Self, allocator: Allocator) void {
-        allocator.free(self.home);
-        allocator.free(self.config);
-        allocator.free(self.zig_pkgs);
-        allocator.free(self.zls_pkgs);
+    pub fn deinit(self: *Self) void {
+        self.allocator.free(self.home);
+        self.allocator.free(self.config);
+        self.allocator.free(self.pkg_root);
+        self.allocator.free(self.zig_pkgs);
+        self.allocator.free(self.zls_pkgs);
+        self.allocator.free(self.zig_index_cache);
+        self.allocator.free(self.zls_index_cache);
+        self.allocator = undefined;
     }
+};
+
+const ZigReleaseInfo = struct {
+    tarball: std.Uri,
+    shasum: [64]u8,
+    size: u64,
 };
 
 const Wget = struct {
@@ -111,11 +156,11 @@ const Wget = struct {
         return Self{
             .allocator = allocator,
             .client = http.Client{ .allocator = allocator },
-            .header_buf = try allocator.alloc(u8, 1024 * 1024 * 4),
+            .header_buf = try allocator.alloc(u8, 1024 * 4),
         };
     }
 
-    pub fn deinit(self: *Self) !void {
+    pub fn deinit(self: *Self) void {
         self.allocator.free(self.header_buf);
         self.client.deinit();
     }
@@ -123,14 +168,26 @@ const Wget = struct {
     pub fn fetchJson(self: *Self, uri: std.Uri) !std.json.Parsed(std.json.Value) {
         var request = try self.get(uri);
         defer request.deinit();
-        // TODO: We need to assert that the response was the expected content type.
-        //assert(std.mem.eql(request.response.content_type, "application/json"));
+        assert(std.mem.eql(u8, request.response.content_type.?, json_content_type));
 
         var reader = request.reader();
         const body = try reader.readAllAlloc(self.allocator, 1024 * 1024 * 4);
         defer self.allocator.free(body);
 
         return try std.json.parseFromSlice(std.json.Value, self.allocator, body, .{});
+    }
+
+    pub fn toFile(self: *Self, uri: std.Uri, dest: File) !void {
+        var request = try self.get(uri);
+        defer request.deinit();
+
+        const reader = request.reader();
+        const writer = dest.writer();
+
+        const Pump = LinearFifo(u8, .{ .Static = 64 });
+        var fifo = Pump.init();
+        defer fifo.deinit();
+        try fifo.pump(reader, writer);
     }
 
     fn get(self: *Self, uri: std.Uri) !http.Client.Request {
@@ -187,7 +244,7 @@ const Launcher = struct {
 
     pub fn deinit(self: *Self) !void {
         log.debug("Cleaning up...", .{});
-        self.locations.deinit(self.allocator);
+        self.locations.deinit();
 
         for (self.launcher_args.items) |arg| {
             self.allocator.free(arg);
@@ -212,11 +269,6 @@ const Launcher = struct {
         log.warn("**TODO** toolchain index is still only read from disk at cwd.", .{});
         const index_text = try readFile(self.allocator, "zig_index.json");
         return try json.parseFromSlice(std.json.Value, self.allocator, index_text, .{});
-    }
-
-    fn findTargetZigVersion(allocator: Allocator) ![]u8 {
-        log.debug("**TODO** zig toolchain version is only search for in cwd.", .{});
-        return try readFile(allocator, ".zigversion");
     }
 };
 
@@ -243,6 +295,38 @@ fn zig_mode(launcher: Launcher) !void {
     }
 }
 
+fn loadZigVersion() !ZigVersion {
+    var result = [_]u8{0} ** 32;
+    var file = std.fs.cwd().openFile(".zigversion", .{}) catch |err| switch (err) {
+        error.FileNotFound => {
+            return ZigVersion.Master;
+        },
+        else => return err,
+    };
+    defer file.close();
+
+    const bytes_read = try file.readAll(&result);
+    assert(bytes_read <= result.len);
+
+    for (0..bytes_read) |idx| {
+        switch (result[idx]) {
+            '\n', '\r' => result[idx] = 0,
+            else => continue,
+        }
+    }
+
+    return ZigVersion{ .Pinned = result };
+}
+
+fn saveZigVersion(zig_version: *ZigVersion) !void {
+    var file = try std.fs.cwd().createFile(".zigversion", .{});
+    defer file.close();
+    switch (zig_version) {
+        .Pinned => |version| file.write(version),
+        else => {},
+    }
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer {
@@ -253,18 +337,26 @@ pub fn main() !void {
         }
     }
 
-    var launcher = try Launcher.init(gpa.allocator());
-    defer launcher.deinit() catch @panic("Unrecoverable error during shutdown!");
+    const allocator = gpa.allocator();
 
-    var wget = try Wget.init(gpa.allocator());
-    defer wget.deinit() catch @panic("Failed to deinitialize Wget object during shutdown!");
+    var wget = try Wget.init(allocator);
+    defer wget.deinit();
 
-    const uri = try std.Uri.parse(zig_index_url);
-    const zig_index = try wget.fetchJson(uri);
-    defer zig_index.deinit();
+    var locations = try Locations.init(allocator);
+    defer locations.deinit();
 
-    const master = zig_index.value.object.getEntry("master").?;
-    const version = master.value_ptr.object.getEntry("version").?.value_ptr;
+    const zig_version = try loadZigVersion();
+    log.debug("Zig version: {s}", .{zig_version.Pinned});
 
-    std.debug.print("Current Zig master version: {s}\n", .{version.string});
+    // const uri = try std.Uri.parse(zig_index_url);
+    // const zig_index = try wget.fetchJson(uri);
+    // defer zig_index.deinit();
+
+    // const master = zig_index.value.object.getEntry("master").?;
+    // const version = master.value_ptr.object.getEntry("version").?.value_ptr;
+
+    // std.debug.print("Current Zig master version: {s}\n", .{version.string});
+
+    // const index_file = try std.fs.cwd().createFile(".zig_index.json", .{});
+    // try wget.fetchJsonToFile(uri, index_file);
 }

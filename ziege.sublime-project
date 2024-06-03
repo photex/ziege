@@ -13,9 +13,9 @@
 	],
 	"settings": {
 	    "zig.build.on_save": false,
-	    "zig.fmt.on_save": true,
+	    "zig.fmt.on_save": false,
 	    "zig.fmt.mode": "file",
-	    "zig.quiet": true,
+	    "zig.quiet": false,
 	    "LSP": {
 	    	"clients": {
 		        "zig": {

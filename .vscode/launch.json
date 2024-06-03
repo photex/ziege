@@ -7,7 +7,8 @@
             "program": "${workspaceRoot}/zig-out/bin/ziege",
             "args": [],
             "environment": [],
-            "cwd": "${workspaceRoot}"
+            "cwd": "${workspaceRoot}",
+            "preLaunchTask": "build"
         }
     ]
 }
