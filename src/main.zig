@@ -1,11 +1,13 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const path = std.fs.path;
 const hash = std.hash;
 const mem = std.mem;
 const json = std.json;
+const http = std.http;
+
 const Allocator = mem.Allocator;
 const assert = std.debug.assert;
-const builtin = @import("builtin");
 
 const zig_index_url = "https://ziglang.org/download/index.json";
 const zig_bin_name_hash = hash.Crc32.hash("zig");
@@ -95,6 +97,54 @@ const Locations = struct {
         allocator.free(self.config);
         allocator.free(self.zig_pkgs);
         allocator.free(self.zls_pkgs);
+    }
+};
+
+const Wget = struct {
+    const Self = @This();
+
+    allocator: Allocator,
+    client: http.Client,
+    header_buf: []u8,
+
+    pub fn init(allocator: Allocator) !Self {
+        return Self{
+            .allocator = allocator,
+            .client = http.Client{ .allocator = allocator },
+            .header_buf = try allocator.alloc(u8, 1024 * 1024 * 4),
+        };
+    }
+
+    pub fn deinit(self: *Self) !void {
+        self.allocator.free(self.header_buf);
+        self.client.deinit();
+    }
+
+    pub fn fetchJson(self: *Self, uri: std.Uri) !std.json.Parsed(std.json.Value) {
+        var request = try self.get(uri);
+        defer request.deinit();
+        // TODO: We need to assert that the response was the expected content type.
+        //assert(std.mem.eql(request.response.content_type, "application/json"));
+
+        var reader = request.reader();
+        const body = try reader.readAllAlloc(self.allocator, 1024 * 1024 * 4);
+        defer self.allocator.free(body);
+
+        return try std.json.parseFromSlice(std.json.Value, self.allocator, body, .{});
+    }
+
+    fn get(self: *Self, uri: std.Uri) !http.Client.Request {
+        var request = try self.client.open(.GET, uri, .{
+            .server_header_buffer = self.header_buf,
+        });
+
+        try request.send();
+        try request.finish();
+        try request.wait();
+
+        assert(request.response.status == .ok);
+
+        return request;
     }
 };
 
@@ -205,4 +255,16 @@ pub fn main() !void {
 
     var launcher = try Launcher.init(gpa.allocator());
     defer launcher.deinit() catch @panic("Unrecoverable error during shutdown!");
+
+    var wget = try Wget.init(gpa.allocator());
+    defer wget.deinit() catch @panic("Failed to deinitialize Wget object during shutdown!");
+
+    const uri = try std.Uri.parse(zig_index_url);
+    const zig_index = try wget.fetchJson(uri);
+    defer zig_index.deinit();
+
+    const master = zig_index.value.object.getEntry("master").?;
+    const version = master.value_ptr.object.getEntry("version").?.value_ptr;
+
+    std.debug.print("Current Zig master version: {s}\n", .{version.string});
 }
