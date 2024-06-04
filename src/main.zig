@@ -18,7 +18,7 @@ const assert = std.debug.assert;
 
 const LinearFifo = std.fifo.LinearFifo;
 
-const DEFAULT_ZIG_VERSION = "master";
+//-----------------------------------------------------------------------------
 
 const INDEX_FILENAME = "index.json";
 const ZIGVERSION_FILENAME = ".zigversion";
@@ -67,6 +67,8 @@ const OS = switch (builtin.os.tag) {
 const URL_PLATFORM = OS ++ "-" ++ ARCH;
 const JSON_PLATFORM = ARCH ++ "-" ++ OS;
 const ARCHIVE_EXT = if (builtin.os.tag == .windows) "zip" else "tar.xz";
+
+//-----------------------------------------------------------------------------
 
 /// For args that start with '+' we interpret as arguments
 /// for ziege rather than the tool we are proxying.
@@ -377,17 +379,19 @@ fn dirExists(abs_path: []const u8) !bool {
 }
 
 fn fetchZig(archive_url: []const u8, archive_path: []const u8, wget: *Wget) !void {
+    const stdout = std.io.getStdOut().writer();
     const archive = try std.fs.createFileAbsolute(archive_path, .{});
     defer archive.close();
 
     const uri = try std.Uri.parse(archive_url);
 
-    log.debug("Downloading {s} => {s}", .{ archive_url, archive_path });
+    try stdout.print("Downloading {s}\n", .{archive_url});
     try wget.toFile(uri, archive);
 }
 
 fn unpackZig(allocator: Allocator, root_path: []const u8, archive_path: []const u8) !void {
-    log.info("Unpacking Zig release to: {s}", .{root_path});
+    const stdout = std.io.getStdOut().writer();
+    try stdout.print("Unpacking Zig release to: {s}\n", .{root_path});
 
     var compressed_archive = try std.fs.openFileAbsolute(archive_path, .{});
     defer compressed_archive.close();
