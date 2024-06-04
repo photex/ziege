@@ -15,22 +15,25 @@ const assert = std.debug.assert;
 
 const LinearFifo = std.fifo.LinearFifo;
 
-const default_zig_version = "master";
+const DEFAULT_ZIG_VERSION = "master";
 
-const json_content_type = "application/json";
-const bin_content_type = "application/octet-stream";
-const gz_content_type = "application/gzip";
-const zip_content_type = "application/zip";
-const tar_content_type = "application/x-tar";
+// TODO: We should be ensuring that downloades conform to certain expectations.
+// const json_content_type = "application/json";
+// const bin_content_type = "application/octet-stream";
+// const gz_content_type = "application/gzip";
+// const zip_content_type = "application/zip";
+// const tar_content_type = "application/x-tar";
 
-const index_filename = "index.json";
-const zigversion_filename = ".zigversion";
+const INDEX_FILENAME = "index.json";
+const ZIGVERSION_FILENAME = ".zigversion";
 
-const zig_index_url = "https://ziglang.org/download/index.json";
-const zig_bin_name_hash = hash.Crc32.hash("zig");
+// TODO: This should be a configuration parameter so that custom/private indexes are possible.
+const ZIG_INDEX_URL = "https://ziglang.org/download/index.json";
+const ZIG_BIN_NAME_HASH = hash.Crc32.hash("zig");
 
-const zls_index_url = "https://zigtools-releases.nyc3.digitaloceanspaces.com/zls/index.json";
-const zls_bin_name_hash = hash.Crc32.hash("zls");
+// TODO: This should be a configuration parameter so that custom/private indexes are possible.
+const ZLS_INDEX_URL = "https://zigtools-releases.nyc3.digitaloceanspaces.com/zls/index.json";
+const ZLS_BIN_NAME_HASH = hash.Crc32.hash("zls");
 
 const Mode = enum { Zig, Zls, Ziege };
 const Command = enum { Update, Fetch, SetDefault };
@@ -42,22 +45,22 @@ const ArgList = std.ArrayList([:0]u8);
 
 const log = std.log.scoped(.ziege);
 
-const arch = switch (builtin.cpu.arch) {
+const ARCH = switch (builtin.cpu.arch) {
     .x86_64 => "x86_64",
     .aarch64 => "aarch64",
     else => @compileError("Unsupported CPU Architecture"),
 };
 
-const os = switch (builtin.os.tag) {
+const OS = switch (builtin.os.tag) {
     .windows => "windows",
     .linux => "linux",
     .macos => "macos",
     else => @compileError("Unsupported OS"),
 };
 
-const url_platform = os ++ "-" ++ arch;
-const json_platform = arch ++ "-" ++ os;
-const archive_ext = if (builtin.os.tag == .windows) "zip" else "tar.xz";
+const URL_PLATFORM = OS ++ "-" ++ ARCH;
+const JSON_PLATFORM = ARCH ++ "-" ++ OS;
+const ARCHIVE_EXT = if (builtin.os.tag == .windows) "zip" else "tar.xz";
 
 /// For args that start with '+' we interpret as arguments
 /// for ziege rather than the tool we are proxying.
@@ -136,12 +139,6 @@ const Locations = struct {
     }
 };
 
-const ZigReleaseInfo = struct {
-    tarball: std.Uri,
-    shasum: [64]u8,
-    size: u64,
-};
-
 /// A simple wrapper around std.http.Client to easily facilitate file downloads.
 const Wget = struct {
     const Self = @This();
@@ -198,7 +195,7 @@ const Wget = struct {
 
 /// If there is a `.zigversion` file present in the current directory, we read the contents into a buffer.
 fn loadZigVersion(allocator: Allocator) !?[]const u8 {
-    var file = std.fs.cwd().openFile(zigversion_filename, .{}) catch |err| switch (err) {
+    var file = std.fs.cwd().openFile(ZIGVERSION_FILENAME, .{}) catch |err| switch (err) {
         error.FileNotFound => {
             return null;
         },
@@ -208,30 +205,32 @@ fn loadZigVersion(allocator: Allocator) !?[]const u8 {
 
     const result = try file.readToEndAlloc(allocator, 64);
 
-    var eos: usize = 0;
+    // If a .zigversion file is edited manually instead of using ziege, then it's possible that
+    // and editor will insert a newline at the end of the file. We trim the version here just in case.
+    var eos: usize = result.len;
     for (0..result.len) |idx| {
-        eos = idx;
         switch (result[idx]) {
             '\n', '\r' => {
+                eos = idx;
                 break;
             },
             else => continue,
         }
     }
 
-    return try allocator.realloc(result, eos + 1);
+    return try allocator.realloc(result, eos);
 }
 
 /// Write the specified version to `.zigversion` in the current working directory.
 fn saveZigVersion(version: []const u8) !void {
-    var file = try std.fs.cwd().createFile(zigversion_filename, .{});
+    var file = try std.fs.cwd().createFile(ZIGVERSION_FILENAME, .{});
     defer file.close();
     _ = try file.write(version);
 }
 
 /// For the specified package root, load the cached `index.json` and parse it.
 fn loadIndexJson(allocator: Allocator, pkg_root: *Dir) !json.Parsed(json.Value) {
-    var file = try pkg_root.openFile(index_filename, .{});
+    var file = try pkg_root.openFile(INDEX_FILENAME, .{});
     defer file.close();
 
     const contents = try file.readToEndAlloc(allocator, 1024 * 1024 * 4);
@@ -240,7 +239,7 @@ fn loadIndexJson(allocator: Allocator, pkg_root: *Dir) !json.Parsed(json.Value) 
 
 /// Get the modification time of a package root's `index.json`
 fn indexModTime(pkg_root: *Dir) !i128 {
-    const stat = pkg_root.statFile(index_filename) catch |err| {
+    const stat = pkg_root.statFile(INDEX_FILENAME) catch |err| {
         if (err != error.FileNotFound) {
             return err;
         }
@@ -253,11 +252,19 @@ fn indexModTime(pkg_root: *Dir) !i128 {
 fn downloadReleaseIndex(url: []const u8, pkg_root: *Dir, wget: *Wget) !void {
     const uri = try std.Uri.parse(url);
 
-    const cache_file = try pkg_root.createFile(index_filename, .{});
+    const cache_file = try pkg_root.createFile(INDEX_FILENAME, .{});
     defer cache_file.close();
 
     try wget.toFile(uri, cache_file);
 }
+
+/// Pinned/Stable releases get full entries in the release index and we use this information rather than deriving our own urls.
+/// We also take extra steps to verify download sizes and checksums.
+const ZigReleaseInfo = struct {
+    tarball: std.Uri,
+    shasum: [64]u8,
+    size: u64,
+};
 
 /// Holds parsed release indexes for Zig and Zls. Provides several helpful functions to assist in information extraction.
 const ReleaseIndexes = struct {
@@ -283,12 +290,12 @@ const ReleaseIndexes = struct {
         // If the mtime of our index cache is greater than 24 hours ago, we download the index before loading it.
         const zig_mod_duration = now - zig_index_mtime;
         if (zig_mod_duration > std.time.ns_per_day) {
-            try downloadReleaseIndex(zig_index_url, &zig_pkg_dir, wget);
+            try downloadReleaseIndex(ZIG_INDEX_URL, &zig_pkg_dir, wget);
         }
 
         const zls_mod_duration = now - zls_index_mtime;
         if (zls_mod_duration > std.time.ns_per_day) {
-            try downloadReleaseIndex(zls_index_url, &zls_pkg_dir, wget);
+            try downloadReleaseIndex(ZLS_INDEX_URL, &zls_pkg_dir, wget);
         }
 
         const zig_index = try loadIndexJson(locations.allocator, &zig_pkg_dir);
@@ -304,6 +311,12 @@ const ReleaseIndexes = struct {
     fn getZigNightlyVersion(self: *const Self) ![]const u8 {
         const master = self.zig.value.object.getEntry("master").?;
         return master.value_ptr.object.getEntry("version").?.value_ptr.string;
+    }
+
+    /// When you pin to nightly, you will end up with a version that isn't present in the index perpetually.
+    /// This function just lets us know whether we can use the index or not.
+    pub fn containsZigRelease(self: *const Self, version: []const u8) bool {
+        return self.zig.value.object.contains(version);
     }
 };
 
@@ -327,8 +340,8 @@ pub fn main() !void {
     const bin_name_hash = hash.Crc32.hash(bin_name);
 
     const mode: Mode = switch (bin_name_hash) {
-        zig_bin_name_hash => .Zig,
-        zls_bin_name_hash => .Zls,
+        ZIG_BIN_NAME_HASH => .Zig,
+        ZLS_BIN_NAME_HASH => .Zls,
         else => .Ziege,
     };
     switch (mode) {
@@ -347,5 +360,9 @@ pub fn main() !void {
 
     const zig_version = try loadZigVersion(allocator) orelse try pinToNightlyZig(&releases);
 
-    log.debug("Using Zig version: {s}", .{zig_version});
+    if (releases.containsZigRelease(zig_version)) {
+        log.debug("Using a pinned release: {s}", .{zig_version});
+    } else {
+        log.debug("Using a nightly release: {s}", .{zig_version});
+    }
 }
