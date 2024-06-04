@@ -1,3 +1,7 @@
+//-----------------------------------------------------------------------------
+// Copyright (c) 2024 - Chip Collier, All Rights Reserved.
+//-----------------------------------------------------------------------------
+
 const builtin = @import("builtin");
 const std = @import("std");
 const path = std.fs.path;
@@ -54,10 +58,9 @@ const os = switch (builtin.os.tag) {
 const url_platform = os ++ "-" ++ arch;
 const json_platform = arch ++ "-" ++ os;
 const archive_ext = if (builtin.os.tag == .windows) "zip" else "tar.xz";
-const home_var = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
 
 /// For args that start with '+' we interpret as arguments
-/// for us rather than the tools we proxy.
+/// for ziege rather than the tool we are proxying.
 fn extract_args(allocator: Allocator, launcher_args: *ArgList, forward_args: *ArgList) !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
@@ -80,6 +83,7 @@ fn extract_args(allocator: Allocator, launcher_args: *ArgList, forward_args: *Ar
     }
 }
 
+/// A simple struct with paths to our configured/standard locations on the system.
 const Locations = struct {
     const Self = @This();
 
@@ -90,7 +94,12 @@ const Locations = struct {
     zig_pkgs: []u8,
     zls_pkgs: []u8,
 
+    /// Build our paths to standard locations, and creates any missing directories if needed.
     pub fn init(allocator: Allocator) !Self {
+        // *TODO*: We would definitely like to have the option to also support something like `ZIG_HOME` or something.
+        //         Especially for CI scenarios.
+        const home_var = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
+
         const home = try std.process.getEnvVarOwned(allocator, home_var);
         const config = try std.fs.path.join(allocator, &.{ home, ".ziege" });
         const pkg_root = try std.fs.path.join(allocator, &.{ config, "pkg" });
@@ -123,7 +132,7 @@ const Locations = struct {
         self.allocator.free(self.pkg_root);
         self.allocator.free(self.zig_pkgs);
         self.allocator.free(self.zls_pkgs);
-        self.allocator = undefined;
+        self.* = undefined;
     }
 };
 
@@ -133,6 +142,7 @@ const ZigReleaseInfo = struct {
     size: u64,
 };
 
+/// A simple wrapper around std.http.Client to easily facilitate file downloads.
 const Wget = struct {
     const Self = @This();
 
@@ -153,18 +163,8 @@ const Wget = struct {
         self.client.deinit();
     }
 
-    pub fn fetchJson(self: *Self, uri: std.Uri) !std.json.Parsed(std.json.Value) {
-        var request = try self.get(uri);
-        defer request.deinit();
-        assert(std.mem.eql(u8, request.response.content_type.?, json_content_type));
-
-        var reader = request.reader();
-        const body = try reader.readAllAlloc(self.allocator, 1024 * 1024 * 4);
-        defer self.allocator.free(body);
-
-        return try std.json.parseFromSlice(std.json.Value, self.allocator, body, .{});
-    }
-
+    /// Download the content located at the provided Uri to the specified destination file.
+    /// > Important to note that we *do not* currently verify the content type of the response.
     pub fn toFile(self: *Self, uri: std.Uri, dest: File) !void {
         var request = try self.get(uri);
         defer request.deinit();
@@ -178,6 +178,8 @@ const Wget = struct {
         try fifo.pump(reader, writer);
     }
 
+    /// Construct the basic GET request for the given Uri.
+    /// > Important to note that this asserts that a response status is 'OK'!
     fn get(self: *Self, uri: std.Uri) !http.Client.Request {
         var request = try self.client.open(.GET, uri, .{
             .server_header_buffer = self.header_buf,
@@ -187,95 +189,14 @@ const Wget = struct {
         try request.finish();
         try request.wait();
 
+        // *TODO* This is a pretty severe step I guess. We need to more clearly handle failures.
         assert(request.response.status == .ok);
 
         return request;
     }
 };
 
-const Launcher = struct {
-    const Self = @This();
-
-    allocator: Allocator,
-    launcher_args: ArgList,
-    forward_args: ArgList,
-    mode: Mode,
-    locations: Locations,
-
-    pub fn init(allocator: Allocator) !Self {
-        log.debug("Initializing...", .{});
-
-        var launcher_args = ArgList.init(allocator);
-        var forward_args = ArgList.init(allocator);
-
-        try extract_args(allocator, &launcher_args, &forward_args);
-
-        const bin_name = path.basename(launcher_args.items[0]);
-        const bin_name_hash = hash.Crc32.hash(bin_name);
-
-        const mode: Mode = switch (bin_name_hash) {
-            zig_bin_name_hash => .Zig,
-            zls_bin_name_hash => .Zls,
-            else => .Ziege,
-        };
-
-        const locations = try Locations.init(allocator);
-
-        return Self{
-            .allocator = allocator,
-            .launcher_args = launcher_args,
-            .forward_args = forward_args,
-            .mode = mode,
-            .locations = locations,
-        };
-    }
-
-    pub fn deinit(self: *Self) !void {
-        log.debug("Cleaning up...", .{});
-        self.locations.deinit();
-
-        for (self.launcher_args.items) |arg| {
-            self.allocator.free(arg);
-        }
-        self.launcher_args.deinit();
-
-        for (self.forward_args.items) |arg| {
-            self.allocator.free(arg);
-        }
-        self.forward_args.deinit();
-    }
-
-    /// Read the contents of the file specified by file_path and return a u8 slice with it's contents.
-    fn readFile(self: *Self, file_path: []const u8) ![]u8 {
-        var file = try std.fs.openFileAbsolute(file_path, .{});
-        defer file.close();
-        return try file.readToEndAlloc(self.allocator, std.math.maxInt(usize));
-    }
-};
-
-fn zig_mode(launcher: Launcher) !void {
-    log.debug("We are running in zig mode!", .{});
-
-    const zigBin = "/home/chip/.local/bin/zig";
-
-    var argv = ArgList.init(launcher.allocator);
-    defer argv.deinit();
-    try argv.append(zigBin);
-
-    try extract_args(launcher, &argv);
-
-    var zig = std.ChildProcess.init(argv.items, launcher.allocator);
-
-    try zig.spawn();
-
-    log.debug("Spawned {d}", .{zig.id});
-
-    const term = try zig.wait();
-    if (term != .Exited) {
-        log.err("There was an error running zig.", .{});
-    }
-}
-
+/// If there is a `.zigversion` file present in the current directory, we read the contents into a buffer.
 fn loadZigVersion(allocator: Allocator) !?[]const u8 {
     var file = std.fs.cwd().openFile(zigversion_filename, .{}) catch |err| switch (err) {
         error.FileNotFound => {
@@ -301,12 +222,14 @@ fn loadZigVersion(allocator: Allocator) !?[]const u8 {
     return try allocator.realloc(result, eos + 1);
 }
 
+/// Write the specified version to `.zigversion` in the current working directory.
 fn saveZigVersion(version: []const u8) !void {
     var file = try std.fs.cwd().createFile(zigversion_filename, .{});
     defer file.close();
     _ = try file.write(version);
 }
 
+/// For the specified package root, load the cached `index.json` and parse it.
 fn loadIndexJson(allocator: Allocator, pkg_root: *Dir) !json.Parsed(json.Value) {
     var file = try pkg_root.openFile(index_filename, .{});
     defer file.close();
@@ -315,6 +238,7 @@ fn loadIndexJson(allocator: Allocator, pkg_root: *Dir) !json.Parsed(json.Value) 
     return try json.parseFromSlice(std.json.Value, allocator, contents, .{});
 }
 
+/// Get the modification time of a package root's `index.json`
 fn indexModTime(pkg_root: *Dir) !i128 {
     const stat = pkg_root.statFile(index_filename) catch |err| {
         if (err != error.FileNotFound) {
@@ -325,6 +249,7 @@ fn indexModTime(pkg_root: *Dir) !i128 {
     return stat.mtime;
 }
 
+/// Download/Update the specified release index cache.
 fn downloadReleaseIndex(url: []const u8, pkg_root: *Dir, wget: *Wget) !void {
     const uri = try std.Uri.parse(url);
 
@@ -334,12 +259,15 @@ fn downloadReleaseIndex(url: []const u8, pkg_root: *Dir, wget: *Wget) !void {
     try wget.toFile(uri, cache_file);
 }
 
+/// Holds parsed release indexes for Zig and Zls. Provides several helpful functions to assist in information extraction.
 const ReleaseIndexes = struct {
     const Self = @This();
 
     zig: json.Parsed(json.Value),
     zls: json.Parsed(json.Value),
 
+    /// Load `index.json` from the Zig and Zls package roots and return an instance of this struct.
+    /// If the indexes are not present *or* they are more than 24 hours old, we download the latest indexes.
     pub fn load(locations: *Locations, wget: *Wget) !Self {
         const now = std.time.nanoTimestamp();
 
@@ -372,12 +300,14 @@ const ReleaseIndexes = struct {
         };
     }
 
+    /// Return a pointer to the current 'master' version for the loaded zig release index.
     fn getZigNightlyVersion(self: *const Self) ![]const u8 {
         const master = self.zig.value.object.getEntry("master").?;
         return master.value_ptr.object.getEntry("version").?.value_ptr.string;
     }
 };
 
+/// Get the current nightly version from our cached release index, and update `.zigversion`.
 fn pinToNightlyZig(releases: *const ReleaseIndexes) ![]const u8 {
     const version = try releases.getZigNightlyVersion();
     try saveZigVersion(version);
