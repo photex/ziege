@@ -8,26 +8,26 @@ This tool was inspired by [Bazelisk](https://github.com/bazelbuild/bazelisk)
 
 ## Feature Checklist
 
-Ziege is just a nascent proof-of-concept at this point but will hopefully be useful to you.
+Ziege is just a nascent proof-of-concept at this point but will hopefully be useful to you. Bug reports, feature requests, or any other sort of contribution are all greatly appreciated.
 
 - [x] Download Zig toolchain indicated by a project `.zigversion`
-- [] Work on major desktop platforms.
+- [ ] Work on major desktop platforms.
   - [x] Windows
   - [x] Linux
-  - [] MacOS (*not yet tested*)
+  - [ ] MacOS (*not yet tested*)
 - [x] Simple proxy for Zig
-- [] Simple proxy for Zls
-- [] Manage pinned Zig version
-  - [] Update nightly version
-- [] List installed Zig versions
-- [] Remove installed Zig versions
-- [] Install Zig toolchains independent of projects
-- [] Gracefully fail in the face of edge cases, network failures, and other problems
-- [] Configure a default Zig toolchain version for when a repo doesn't specify one
-- [] Allow configuration of alternate Zig and Zls indexes.
-- [] Allow configuration of the location of Zig toolchains.
-- [] Add symlinks in a repo (ex: `<repo>/tools/zig`) for folks that do not wish to use Ziege as a proxy
-- [] Be your one stop shop for all your Zig tool needs!
+- [ ] Simple proxy for Zls
+- [ ] Manage pinned Zig version
+  - [ ] Update nightly version
+- [ ] List installed Zig versions
+- [ ] Remove installed Zig versions
+- [ ] Install Zig toolchains independent of projects
+- [ ] Gracefully fail in the face of edge cases, network failures, and other problems
+- [ ] Configure a default Zig toolchain version for when a repo doesn't specify one
+- [ ] Allow configuration of alternate Zig and Zls indexes.
+- [ ] Allow configuration of the location of Zig toolchains.
+- [ ] Add symlinks in a repo (ex: `<repo>/tools/zig`) for folks that do not wish to use Ziege as a proxy
+- [ ] Be your one stop shop for all your Zig tool needs!
 
 ## How it works
 
