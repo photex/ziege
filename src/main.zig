@@ -27,6 +27,9 @@ const DEFAULT_ZIG_VERSION = "master";
 const INDEX_FILENAME = "index.json";
 const ZIGVERSION_FILENAME = ".zigversion";
 
+/// <URL_PLATFORM>-<VERSION>.<ARCHIVE_EXT>
+const ZIG_NIGHTLY_URL_FMT = "https://ziglang.org/builds/zig-{s}-{s}.{s}";
+
 // TODO: This should be a configuration parameter so that custom/private indexes are possible.
 const ZIG_INDEX_URL = "https://ziglang.org/download/index.json";
 const ZIG_BIN_NAME_HASH = hash.Crc32.hash("zig");
@@ -86,43 +89,46 @@ fn extract_args(allocator: Allocator, launcher_args: *ArgList, forward_args: *Ar
     }
 }
 
+fn ensureDirectoryExists(abs_path: []const u8) !void {
+    std.fs.makeDirAbsolute(abs_path) catch |err| switch (err) {
+        error.PathAlreadyExists => return,
+        else => return err,
+    };
+}
+
 /// A simple struct with paths to our configured/standard locations on the system.
 const Locations = struct {
     const Self = @This();
 
     allocator: Allocator,
-    home: []u8,
-    config: []u8,
+    app_data: []u8,
+    config_file: []u8,
     pkg_root: []u8,
     zig_pkgs: []u8,
     zls_pkgs: []u8,
 
     /// Build our paths to standard locations, and creates any missing directories if needed.
     pub fn init(allocator: Allocator) !Self {
-        // *TODO*: We would definitely like to have the option to also support something like `ZIG_HOME` or something.
-        //         Especially for CI scenarios.
-        const home_var = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
-
-        const home = try std.process.getEnvVarOwned(allocator, home_var);
-        const config = try std.fs.path.join(allocator, &.{ home, ".ziege" });
-        const pkg_root = try std.fs.path.join(allocator, &.{ config, "pkg" });
+        const app_data = try std.fs.getAppDataDir(allocator, "ziege");
+        const config_file = try std.fs.path.join(allocator, &.{ app_data, "settings.json" });
+        const pkg_root = try std.fs.path.join(allocator, &.{ app_data, "pkg" });
         const zig_pkgs = try std.fs.path.join(allocator, &.{ pkg_root, "zig" });
         const zls_pkgs = try std.fs.path.join(allocator, &.{ pkg_root, "zls" });
 
-        log.debug("ZIEGE ROOT: {s}", .{config});
+        log.debug("ZIEGE ROOT: {s}", .{app_data});
         log.debug("ZIG PACKAGES: {s}", .{zig_pkgs});
         log.debug("ZLS PACKAGES: {s}", .{zls_pkgs});
 
-        // TODO: This is quite a hack currently
-        var home_dir = try std.fs.openDirAbsolute(home, .{});
-        try home_dir.makePath(".ziege/pkg/zig");
-        try home_dir.makePath(".ziege/pkg/zls");
-        home_dir.close();
+        // I'm assuming here that we can "make" a dirt that already exists without errors.
+        try ensureDirectoryExists(app_data);
+        try ensureDirectoryExists(pkg_root);
+        try ensureDirectoryExists(zig_pkgs);
+        try ensureDirectoryExists(zls_pkgs);
 
         return Self{
             .allocator = allocator,
-            .home = home,
-            .config = config,
+            .app_data = app_data,
+            .config_file = config_file,
             .pkg_root = pkg_root,
             .zig_pkgs = zig_pkgs,
             .zls_pkgs = zls_pkgs,
@@ -130,12 +136,16 @@ const Locations = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        self.allocator.free(self.home);
-        self.allocator.free(self.config);
+        self.allocator.free(self.app_data);
+        self.allocator.free(self.config_file);
         self.allocator.free(self.pkg_root);
         self.allocator.free(self.zig_pkgs);
         self.allocator.free(self.zls_pkgs);
         self.* = undefined;
+    }
+
+    pub fn getZigRootPath(self: *Self, version: []const u8) ![]u8 {
+        return try std.fs.path.join(self.allocator, &.{ self.zig_pkgs, version });
     }
 };
 
@@ -261,8 +271,8 @@ fn downloadReleaseIndex(url: []const u8, pkg_root: *Dir, wget: *Wget) !void {
 /// Pinned/Stable releases get full entries in the release index and we use this information rather than deriving our own urls.
 /// We also take extra steps to verify download sizes and checksums.
 const ZigReleaseInfo = struct {
-    tarball: std.Uri,
-    shasum: [64]u8,
+    tarball: []const u8,
+    shasum: []const u8,
     size: u64,
 };
 
@@ -270,6 +280,7 @@ const ZigReleaseInfo = struct {
 const ReleaseIndexes = struct {
     const Self = @This();
 
+    allocator: Allocator,
     zig: json.Parsed(json.Value),
     zls: json.Parsed(json.Value),
 
@@ -290,18 +301,22 @@ const ReleaseIndexes = struct {
         // If the mtime of our index cache is greater than 24 hours ago, we download the index before loading it.
         const zig_mod_duration = now - zig_index_mtime;
         if (zig_mod_duration > std.time.ns_per_day) {
+            log.debug("Downloading {s}", .{ZIG_INDEX_URL});
             try downloadReleaseIndex(ZIG_INDEX_URL, &zig_pkg_dir, wget);
         }
 
         const zls_mod_duration = now - zls_index_mtime;
         if (zls_mod_duration > std.time.ns_per_day) {
+            log.debug("Downloading {s}", .{ZLS_INDEX_URL});
             try downloadReleaseIndex(ZLS_INDEX_URL, &zls_pkg_dir, wget);
         }
 
+        log.debug("Downloading {s}", .{ZLS_INDEX_URL});
         const zig_index = try loadIndexJson(locations.allocator, &zig_pkg_dir);
         const zls_index = try loadIndexJson(locations.allocator, &zls_pkg_dir);
 
         return Self{
+            .allocator = locations.allocator,
             .zig = zig_index,
             .zls = zls_index,
         };
@@ -313,10 +328,26 @@ const ReleaseIndexes = struct {
         return master.value_ptr.object.getEntry("version").?.value_ptr.string;
     }
 
+    /// Return a url where the nightly release can be downloaded
+    pub fn getNightlyReleaseUrl(self: *const Self, version: []const u8) ![]u8 {
+        return try std.fmt.allocPrint(self.allocator, ZIG_NIGHTLY_URL_FMT, .{ URL_PLATFORM, version, ARCHIVE_EXT });
+    }
+
     /// When you pin to nightly, you will end up with a version that isn't present in the index perpetually.
     /// This function just lets us know whether we can use the index or not.
     pub fn containsZigRelease(self: *const Self, version: []const u8) bool {
         return self.zig.value.object.contains(version);
+    }
+
+    /// Get the extended release information for a pinned Zig version.
+    pub fn getReleaseInfo(self: *const Self, version: []const u8) !ZigReleaseInfo {
+        const version_object = self.zig.value.object.getPtr(version).?;
+        const info_object = version_object.object.getPtr(JSON_PLATFORM).?;
+        return ZigReleaseInfo{
+            .tarball = info_object.object.getPtr("tarball").?.string,
+            .shasum = info_object.object.getPtr("shasum").?.string,
+            .size = try std.fmt.parseInt(u64, info_object.object.getPtr("size").?.string, 10),
+        };
     }
 };
 
@@ -360,9 +391,14 @@ pub fn main() !void {
 
     const zig_version = try loadZigVersion(allocator) orelse try pinToNightlyZig(&releases);
 
+    const zig_root_path = try locations.getZigRootPath(zig_version);
+    log.debug("Zig root: {s}", .{zig_root_path});
+
     if (releases.containsZigRelease(zig_version)) {
-        log.debug("Using a pinned release: {s}", .{zig_version});
+        const release_info = try releases.getReleaseInfo(zig_version);
+        log.debug("Using a pinned release {s}: {s}", .{ zig_version, release_info.tarball });
     } else {
-        log.debug("Using a nightly release: {s}", .{zig_version});
+        const nightly_url = try releases.getNightlyReleaseUrl(zig_version);
+        log.debug("Using a nightly release {s}: {s}", .{ zig_version, nightly_url });
     }
 }
