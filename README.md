@@ -1,4 +1,7 @@
-# Ziege
+
+<p align="center">
+  <img width="256" height="256" src="logo.png">
+</p>
 
 Ziege manages zig toolchains and zls releases on your system (automatically configured by a `.zigversion` in your repo root). When used as an alias (either by renaming it, or by symlink) to Zig it will seamlessly dispatch all command line arguments to the correct Zig binary for a project.
 
