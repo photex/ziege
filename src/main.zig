@@ -390,6 +390,23 @@ pub fn main() !void {
 
     const allocator = arena.allocator();
 
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+
+    const bin_name = path.basename(args[0]);
+    const bin_name_hash = hash.Crc32.hash(bin_name);
+
+    const mode: Mode = switch (bin_name_hash) {
+        zig_bin_name_hash => .Zig,
+        zls_bin_name_hash => .Zls,
+        else => .Ziege,
+    };
+    switch (mode) {
+        .Ziege => log.debug("Running in Ziege mode.", .{}),
+        .Zig => log.debug("Running in Zig mode.", .{}),
+        .Zls => log.debug("Running in Zls mode.", .{}),
+    }
+
     var wget = try Wget.init(allocator);
     defer wget.deinit();
 
