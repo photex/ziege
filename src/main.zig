@@ -49,7 +49,7 @@ const Command = enum { Update, Fetch, SetDefault };
 const Dir = std.fs.Dir;
 const File = std.fs.File;
 
-const ArgList = std.ArrayList([:0]u8);
+const ArgList = std.ArrayList([]u8);
 
 const log = std.log.scoped(.ziege);
 
@@ -74,17 +74,12 @@ const ARCHIVE_EXT = if (builtin.os.tag == .windows) "zip" else "tar.xz";
 
 /// For args that start with '+' we interpret as arguments
 /// for ziege rather than the tool we are proxying.
-fn extract_args(allocator: Allocator, launcher_args: *ArgList, forward_args: *ArgList) !void {
+fn splitArgs(allocator: Allocator, launcher_args: *ArgList, forward_args: *ArgList) !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
     try forward_args.ensureTotalCapacity(args.len);
     try launcher_args.ensureTotalCapacity(args.len);
-
-    // We preserve the path to the executable that got run in the launcher
-    // args so that we can figure out what mode to operate in etc.
-    const binpath = try allocator.dupeZ(u8, args[0]);
-    try launcher_args.append(binpath);
 
     for (args[1..]) |arg| {
         const copy = try allocator.dupeZ(u8, arg);
@@ -491,11 +486,18 @@ pub fn main() !void {
         const zig_bin_path = try std.fs.path.join(allocator, &.{ zig_root_path, ZIG_BIN_NAME });
         log.debug("Running {s}", .{zig_bin_path});
 
-        var zig_proc = std.process.Child.init(&.{ zig_bin_path, "help" }, allocator);
+        var launcher_args = ArgList.init(allocator);
+        var zig_args = ArgList.init(allocator);
+
+        try zig_args.append(zig_bin_path);
+
+        try splitArgs(allocator, &launcher_args, &zig_args);
+
+        log.debug("Found {d} launcher args.", .{launcher_args.items.len});
+
+        var zig_proc = std.process.Child.init(zig_args.items, allocator);
         try zig_proc.spawn();
         const res = try zig_proc.wait();
-        if (res.Exited != 0) {
-            log.err("zig returned a non-zero exit code!", .{});
-        }
+        std.process.exit(res.Exited);
     }
 }
