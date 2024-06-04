@@ -19,6 +19,9 @@ const gz_content_type = "application/gzip";
 const zip_content_type = "application/zip";
 const tar_content_type = "application/x-tar";
 
+const index_filename = "index.json";
+const zigversion_filename = ".zigversion";
+
 const zig_index_url = "https://ziglang.org/download/index.json";
 const zig_bin_name_hash = hash.Crc32.hash("zig");
 
@@ -55,7 +58,6 @@ const home_var = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
 
 const ZigVersion = union(enum) {
     Master,
-    Stable,
     Pinned: [32]u8,
 };
 
@@ -93,17 +95,12 @@ const Locations = struct {
     zig_pkgs: []u8,
     zls_pkgs: []u8,
 
-    zig_index_cache: []u8,
-    zls_index_cache: []u8,
-
     pub fn init(allocator: Allocator) !Self {
         const home = try std.process.getEnvVarOwned(allocator, home_var);
         const config = try std.fs.path.join(allocator, &.{ home, ".ziege" });
         const pkg_root = try std.fs.path.join(allocator, &.{ config, "pkg" });
         const zig_pkgs = try std.fs.path.join(allocator, &.{ pkg_root, "zig" });
-        const zig_index_cache = try std.fs.path.join(allocator, &.{ pkg_root, "zig", "index.json" });
         const zls_pkgs = try std.fs.path.join(allocator, &.{ pkg_root, "zls" });
-        const zls_index_cache = try std.fs.path.join(allocator, &.{ pkg_root, "zls", "index.json" });
 
         log.debug("ZIEGE ROOT: {s}", .{config});
         log.debug("ZIG PACKAGES: {s}", .{zig_pkgs});
@@ -122,8 +119,6 @@ const Locations = struct {
             .pkg_root = pkg_root,
             .zig_pkgs = zig_pkgs,
             .zls_pkgs = zls_pkgs,
-            .zig_index_cache = zig_index_cache,
-            .zls_index_cache = zls_index_cache,
         };
     }
 
@@ -133,8 +128,6 @@ const Locations = struct {
         self.allocator.free(self.pkg_root);
         self.allocator.free(self.zig_pkgs);
         self.allocator.free(self.zls_pkgs);
-        self.allocator.free(self.zig_index_cache);
-        self.allocator.free(self.zls_index_cache);
         self.allocator = undefined;
     }
 };
@@ -263,13 +256,6 @@ const Launcher = struct {
         defer file.close();
         return try file.readToEndAlloc(self.allocator, std.math.maxInt(usize));
     }
-
-    /// Load a zig release index
-    fn loadZigReleaseIndex(self: *Self) !json.Parsed(json.Value) {
-        log.warn("**TODO** toolchain index is still only read from disk at cwd.", .{});
-        const index_text = try readFile(self.allocator, "zig_index.json");
-        return try json.parseFromSlice(std.json.Value, self.allocator, index_text, .{});
-    }
 };
 
 fn zig_mode(launcher: Launcher) !void {
@@ -297,7 +283,7 @@ fn zig_mode(launcher: Launcher) !void {
 
 fn loadZigVersion() !ZigVersion {
     var result = [_]u8{0} ** 32;
-    var file = std.fs.cwd().openFile(".zigversion", .{}) catch |err| switch (err) {
+    var file = std.fs.cwd().openFile(zigversion_filename, .{}) catch |err| switch (err) {
         error.FileNotFound => {
             return ZigVersion.Master;
         },
@@ -306,7 +292,6 @@ fn loadZigVersion() !ZigVersion {
     defer file.close();
 
     const bytes_read = try file.readAll(&result);
-    assert(bytes_read <= result.len);
 
     for (0..bytes_read) |idx| {
         switch (result[idx]) {
@@ -319,7 +304,7 @@ fn loadZigVersion() !ZigVersion {
 }
 
 fn saveZigVersion(zig_version: *ZigVersion) !void {
-    var file = try std.fs.cwd().createFile(".zigversion", .{});
+    var file = try std.fs.cwd().createFile(zigversion_filename, .{});
     defer file.close();
     switch (zig_version) {
         .Pinned => |version| file.write(version),
@@ -327,17 +312,94 @@ fn saveZigVersion(zig_version: *ZigVersion) !void {
     }
 }
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer {
-        const stat = gpa.deinit();
-        if (stat == .leak) {
-            log.err("Memory leak detected!", .{});
-            std.process.exit(1);
+fn loadIndexJson(allocator: Allocator, pkg_root: *Dir) !json.Parsed(json.Value) {
+    var file = try pkg_root.openFile(index_filename, .{});
+    defer file.close();
+
+    const contents = try file.readToEndAlloc(allocator, 1024 * 1024 * 4);
+    return try json.parseFromSlice(std.json.Value, allocator, contents, .{});
+}
+
+fn indexModTime(pkg_root: *Dir) !i128 {
+    const stat = pkg_root.statFile(index_filename) catch |err| {
+        if (err != error.FileNotFound) {
+            return err;
         }
+        return std.time.nanoTimestamp() - std.time.ns_per_week;
+    };
+    return stat.mtime;
+}
+
+fn downloadReleaseIndex(url: []const u8, pkg_root: *Dir, wget: *Wget) !void {
+    const uri = try std.Uri.parse(url);
+
+    const cache_file = try pkg_root.createFile(index_filename, .{});
+    defer cache_file.close();
+
+    try wget.toFile(uri, cache_file);
+}
+
+const ReleaseIndexes = struct {
+    const Self = @This();
+
+    zig: json.Parsed(json.Value),
+    zls: json.Parsed(json.Value),
+
+    pub fn load(locations: *Locations, wget: *Wget) !Self {
+        const now = std.time.nanoTimestamp();
+
+        var zig_pkg_dir = try std.fs.openDirAbsolute(locations.zig_pkgs, .{});
+        defer zig_pkg_dir.close();
+
+        var zls_pkg_dir = try std.fs.openDirAbsolute(locations.zls_pkgs, .{});
+        defer zls_pkg_dir.close();
+
+        const zig_index_mtime = try indexModTime(&zig_pkg_dir);
+        const zls_index_mtime = try indexModTime(&zls_pkg_dir);
+
+        // If the mtime of our index cache is greater than 24 hours ago, we download the index before loading it.
+        const zig_mod_duration = now - zig_index_mtime;
+        if (zig_mod_duration > std.time.ns_per_day) {
+            try downloadReleaseIndex(zig_index_url, &zig_pkg_dir, wget);
+        }
+
+        const zls_mod_duration = now - zls_index_mtime;
+        if (zls_mod_duration > std.time.ns_per_day) {
+            try downloadReleaseIndex(zls_index_url, &zls_pkg_dir, wget);
+        }
+
+        const zig_index = try loadIndexJson(locations.allocator, &zig_pkg_dir);
+        const zls_index = try loadIndexJson(locations.allocator, &zls_pkg_dir);
+
+        return Self{
+            .zig = zig_index,
+            .zls = zls_index,
+        };
     }
 
-    const allocator = gpa.allocator();
+    fn getMasterVersion(self: *const Self) ![]const u8 {
+        const master = self.zig.value.object.getEntry("master").?;
+        return master.value_ptr.object.getEntry("version").?.value_ptr.string;
+    }
+
+    pub fn resolveZigVersion(self: *const Self, zig_version: *ZigVersion) !void {
+        var result = [_]u8{0} ** 32;
+        switch (zig_version.*) {
+            .Master => {
+                const version_str = try self.getMasterVersion();
+                std.mem.copyForwards(u8, &result, version_str);
+                zig_version.* = ZigVersion{ .Pinned = result };
+            },
+            else => {},
+        }
+    }
+};
+
+pub fn main() !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
 
     var wget = try Wget.init(allocator);
     defer wget.deinit();
@@ -345,18 +407,16 @@ pub fn main() !void {
     var locations = try Locations.init(allocator);
     defer locations.deinit();
 
-    const zig_version = try loadZigVersion();
-    log.debug("Zig version: {s}", .{zig_version.Pinned});
+    var zig_version = try loadZigVersion();
 
-    // const uri = try std.Uri.parse(zig_index_url);
-    // const zig_index = try wget.fetchJson(uri);
-    // defer zig_index.deinit();
+    const releases = try ReleaseIndexes.load(&locations, &wget);
 
-    // const master = zig_index.value.object.getEntry("master").?;
-    // const version = master.value_ptr.object.getEntry("version").?.value_ptr;
+    try releases.resolveZigVersion(&zig_version);
 
-    // std.debug.print("Current Zig master version: {s}\n", .{version.string});
-
-    // const index_file = try std.fs.cwd().createFile(".zig_index.json", .{});
-    // try wget.fetchJsonToFile(uri, index_file);
+    switch (zig_version) {
+        .Master => {},
+        .Pinned => |version| {
+            log.debug("Using pinned Zig release: {s}", .{version});
+        },
+    }
 }
