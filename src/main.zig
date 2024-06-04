@@ -56,11 +56,6 @@ const json_platform = arch ++ "-" ++ os;
 const archive_ext = if (builtin.os.tag == .windows) "zip" else "tar.xz";
 const home_var = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
 
-const ZigVersion = union(enum) {
-    Master,
-    Pinned: [32]u8,
-};
-
 /// For args that start with '+' we interpret as arguments
 /// for us rather than the tools we proxy.
 fn extract_args(allocator: Allocator, launcher_args: *ArgList, forward_args: *ArgList) !void {
@@ -281,47 +276,35 @@ fn zig_mode(launcher: Launcher) !void {
     }
 }
 
-fn loadZigVersion() !ZigVersion {
-    var result = [_]u8{0} ** 32;
+fn loadZigVersion(allocator: Allocator) !?[]const u8 {
     var file = std.fs.cwd().openFile(zigversion_filename, .{}) catch |err| switch (err) {
         error.FileNotFound => {
-            return ZigVersion.Master;
+            return null;
         },
         else => return err,
     };
     defer file.close();
 
-    const bytes_read = try file.readAll(&result);
+    const result = try file.readToEndAlloc(allocator, 64);
 
-    for (0..bytes_read) |idx| {
+    var eos: usize = 0;
+    for (0..result.len) |idx| {
+        eos = idx;
         switch (result[idx]) {
-            '\n', '\r' => result[idx] = 0,
+            '\n', '\r' => {
+                break;
+            },
             else => continue,
         }
     }
 
-    return ZigVersion{ .Pinned = result };
+    return try allocator.realloc(result, eos + 1);
 }
 
-fn saveZigVersion(zig_version: *ZigVersion) !void {
-    switch (zig_version.*) {
-        .Pinned => |pinned| {
-            // Because our buffer is statically sized and filled with 0 otherwise,
-            // we avoid writing out the 0 portion.
-            var eos: usize = 0;
-            for (0..pinned.len) |idx| {
-                if (pinned[idx] == 0) {
-                    eos = idx;
-                    break;
-                }
-            }
-            const version = pinned[0..eos];
-            var file = try std.fs.cwd().createFile(zigversion_filename, .{});
-            defer file.close();
-            _ = try file.write(version);
-        },
-        else => {},
-    }
+fn saveZigVersion(version: []const u8) !void {
+    var file = try std.fs.cwd().createFile(zigversion_filename, .{});
+    defer file.close();
+    _ = try file.write(version);
 }
 
 fn loadIndexJson(allocator: Allocator, pkg_root: *Dir) !json.Parsed(json.Value) {
@@ -389,24 +372,17 @@ const ReleaseIndexes = struct {
         };
     }
 
-    fn getMasterVersion(self: *const Self) ![]const u8 {
+    fn getZigNightlyVersion(self: *const Self) ![]const u8 {
         const master = self.zig.value.object.getEntry("master").?;
         return master.value_ptr.object.getEntry("version").?.value_ptr.string;
     }
-
-    pub fn resolveZigVersion(self: *const Self, zig_version: *ZigVersion) !void {
-        var result = [_]u8{0} ** 32;
-        switch (zig_version.*) {
-            .Master => {
-                const version_str = try self.getMasterVersion();
-                std.mem.copyForwards(u8, &result, version_str);
-                zig_version.* = ZigVersion{ .Pinned = result };
-                try saveZigVersion(zig_version);
-            },
-            else => {},
-        }
-    }
 };
+
+fn pinToNightlyZig(releases: *const ReleaseIndexes) ![]const u8 {
+    const version = try releases.getZigNightlyVersion();
+    try saveZigVersion(version);
+    return version;
+}
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -420,16 +396,9 @@ pub fn main() !void {
     var locations = try Locations.init(allocator);
     defer locations.deinit();
 
-    var zig_version = try loadZigVersion();
-
     const releases = try ReleaseIndexes.load(&locations, &wget);
 
-    try releases.resolveZigVersion(&zig_version);
+    const zig_version = try loadZigVersion(allocator) orelse try pinToNightlyZig(&releases);
 
-    switch (zig_version) {
-        .Master => {},
-        .Pinned => |version| {
-            log.debug("Using pinned Zig release: {s}", .{version});
-        },
-    }
+    log.debug("Using Zig version: {s}", .{zig_version});
 }

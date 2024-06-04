@@ -1,8 +1,18 @@
 {
     "configurations": [
         {
-            "name": "ziege",
+            "name": "ziege (vs)",
             "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceRoot}/zig-out/bin/ziege",
+            "args": [],
+            "environment": [],
+            "cwd": "${workspaceRoot}",
+            "preLaunchTask": "build"
+        },
+        {
+            "name": "ziege (gdb)",
+            "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceRoot}/zig-out/bin/ziege",
             "args": [],
