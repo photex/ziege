@@ -29,17 +29,19 @@ const ZIG_ARCHIVE_FMT = "zig-{s}-{s}.{s}";
 
 // TODO: This should be a configuration parameter so that custom/private indexes are possible.
 const ZIG_INDEX_URL = "https://ziglang.org/download/index.json";
-const ZIG_BIN_NAME_HASH = switch (builtin.os.tag) {
-    .windows => hash.Crc32.hash("zig.exe"),
-    else => hash.Crc32.hash("zig"),
+const ZIG_BIN_NAME = switch (builtin.os.tag) {
+    .windows => "zig.exe",
+    else => "zig",
 };
+const ZIG_BIN_NAME_HASH = hash.Crc32.hash(ZIG_BIN_NAME);
 
 // TODO: This should be a configuration parameter so that custom/private indexes are possible.
 const ZLS_INDEX_URL = "https://zigtools-releases.nyc3.digitaloceanspaces.com/zls/index.json";
-const ZLS_BIN_NAME_HASH = switch (builtin.os.tag) {
-    .windows => hash.Crc32.hash("zls.exe"),
-    else => hash.Crc32.hash("zls"),
+const ZLS_BIN_NAME = switch (builtin.os.tag) {
+    .windows => "zls.exe",
+    else => "zls",
 };
+const ZLS_BIN_NAME_HASH = hash.Crc32.hash(ZLS_BIN_NAME);
 
 const Mode = enum { Zig, Zls, Ziege };
 const Command = enum { Update, Fetch, SetDefault };
@@ -473,6 +475,9 @@ pub fn main() !void {
         if (releases.containsZigRelease(zig_version)) {
             const release_info = try releases.getReleaseInfo(zig_version);
             try fetchZig(release_info.tarball, archive_path, &wget);
+            // TODO: Tagged releases can be easily verified after download.
+            //       - shasum
+            //       - size
         } else {
             const nightly_url = try releases.getNightlyReleaseUrl(zig_version);
             try fetchZig(nightly_url, archive_path, &wget);
@@ -480,5 +485,10 @@ pub fn main() !void {
         defer std.fs.deleteFileAbsolute(archive_path) catch @panic("Failed to remove downloaded archive.");
 
         try unpackZig(allocator, zig_root_path, archive_path);
+    }
+
+    if (mode == .Zig) {
+        const zig_bin_path = try std.fs.path.join(allocator, &.{ zig_root_path, ZIG_BIN_NAME });
+        log.debug("Running {s}", .{zig_bin_path});
     }
 }
