@@ -9,6 +9,9 @@ const hash = std.hash;
 const mem = std.mem;
 const json = std.json;
 const http = std.http;
+const xz = std.compress.xz;
+const tar = std.tar;
+const zip = std.zip;
 
 const Allocator = mem.Allocator;
 const assert = std.debug.assert;
@@ -17,18 +20,12 @@ const LinearFifo = std.fifo.LinearFifo;
 
 const DEFAULT_ZIG_VERSION = "master";
 
-// TODO: We should be ensuring that downloades conform to certain expectations.
-// const json_content_type = "application/json";
-// const bin_content_type = "application/octet-stream";
-// const gz_content_type = "application/gzip";
-// const zip_content_type = "application/zip";
-// const tar_content_type = "application/x-tar";
-
 const INDEX_FILENAME = "index.json";
 const ZIGVERSION_FILENAME = ".zigversion";
 
 /// <URL_PLATFORM>-<VERSION>.<ARCHIVE_EXT>
 const ZIG_NIGHTLY_URL_FMT = "https://ziglang.org/builds/zig-{s}-{s}.{s}";
+const ZIG_ARCHIVE_FMT = "zig-{s}-{s}.{s}";
 
 // TODO: This should be a configuration parameter so that custom/private indexes are possible.
 const ZIG_INDEX_URL = "https://ziglang.org/download/index.json";
@@ -175,6 +172,13 @@ const Wget = struct {
     pub fn toFile(self: *Self, uri: std.Uri, dest: File) !void {
         var request = try self.get(uri);
         defer request.deinit();
+
+        // TODO: We should be ensuring that downloades conform to certain expectations.
+        // const json_content_type = "application/json";
+        // const bin_content_type = "application/octet-stream";
+        // const gz_content_type = "application/gzip";
+        // const zip_content_type = "application/zip";
+        // const tar_content_type = "application/x-tar";
 
         const reader = request.reader();
         const writer = dest.writer();
@@ -358,6 +362,42 @@ fn pinToNightlyZig(releases: *const ReleaseIndexes) ![]const u8 {
     return version;
 }
 
+fn dirExists(abs_path: []const u8) !bool {
+    var dir = std.fs.openDirAbsolute(abs_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => return err,
+    };
+    dir.close();
+    return true;
+}
+
+fn fetchZig(archive_url: []const u8, archive_path: []const u8, wget: *Wget) !void {
+    const archive = try std.fs.createFileAbsolute(archive_path, .{});
+    defer archive.close();
+
+    const uri = try std.Uri.parse(archive_url);
+
+    log.debug("Downloading {s} => {s}", .{ archive_url, archive_path });
+    try wget.toFile(uri, archive);
+}
+
+fn unpackZig(allocator: Allocator, root_path: []const u8, archive_path: []const u8) !void {
+    log.info("Unpacking Zig release to: {s}", .{root_path});
+
+    var root_dir = try std.fs.openDirAbsolute(root_path, .{});
+    defer root_dir.close();
+
+    var compressed_archive = try std.fs.openFileAbsolute(archive_path, .{});
+    defer compressed_archive.close();
+    if (builtin.os.tag == .windows) {
+        const stream = compressed_archive.seekableStream();
+        try zip.extract(root_dir, stream, .{});
+    } else {
+        var decompressor = try xz.decompress(allocator, compressed_archive.reader());
+        try tar.pipeToFileSystem(root_dir, decompressor.reader(), .{ .strip_components = 1 });
+    }
+}
+
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -394,11 +434,22 @@ pub fn main() !void {
     const zig_root_path = try locations.getZigRootPath(zig_version);
     log.debug("Zig root: {s}", .{zig_root_path});
 
-    if (releases.containsZigRelease(zig_version)) {
-        const release_info = try releases.getReleaseInfo(zig_version);
-        log.debug("Using a pinned release {s}: {s}", .{ zig_version, release_info.tarball });
-    } else {
-        const nightly_url = try releases.getNightlyReleaseUrl(zig_version);
-        log.debug("Using a nightly release {s}: {s}", .{ zig_version, nightly_url });
+    if (!try dirExists(zig_root_path)) {
+        try ensureDirectoryExists(zig_root_path);
+        errdefer std.fs.deleteDirAbsolute(zig_root_path) catch @panic("Unable to remove zig root path after an error.");
+
+        const archive_filename = try std.fmt.allocPrint(allocator, ZIG_ARCHIVE_FMT, .{ URL_PLATFORM, zig_version, ARCHIVE_EXT });
+        const archive_path = try std.fs.path.join(allocator, &.{ zig_root_path, archive_filename });
+
+        if (releases.containsZigRelease(zig_version)) {
+            const release_info = try releases.getReleaseInfo(zig_version);
+            try fetchZig(release_info.tarball, archive_path, &wget);
+        } else {
+            const nightly_url = try releases.getNightlyReleaseUrl(zig_version);
+            try fetchZig(nightly_url, archive_path, &wget);
+        }
+        defer std.fs.deleteFileAbsolute(archive_path) catch @panic("Failed to remove downloaded archive.");
+
+        try unpackZig(allocator, zig_root_path, archive_path);
     }
 }
