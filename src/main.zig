@@ -304,10 +304,22 @@ fn loadZigVersion() !ZigVersion {
 }
 
 fn saveZigVersion(zig_version: *ZigVersion) !void {
-    var file = try std.fs.cwd().createFile(zigversion_filename, .{});
-    defer file.close();
-    switch (zig_version) {
-        .Pinned => |version| file.write(version),
+    switch (zig_version.*) {
+        .Pinned => |pinned| {
+            // Because our buffer is statically sized and filled with 0 otherwise,
+            // we avoid writing out the 0 portion.
+            var eos: usize = 0;
+            for (0..pinned.len) |idx| {
+                if (pinned[idx] == 0) {
+                    eos = idx;
+                    break;
+                }
+            }
+            const version = pinned[0..eos];
+            var file = try std.fs.cwd().createFile(zigversion_filename, .{});
+            defer file.close();
+            _ = try file.write(version);
+        },
         else => {},
     }
 }
@@ -389,6 +401,7 @@ const ReleaseIndexes = struct {
                 const version_str = try self.getMasterVersion();
                 std.mem.copyForwards(u8, &result, version_str);
                 zig_version.* = ZigVersion{ .Pinned = result };
+                try saveZigVersion(zig_version);
             },
             else => {},
         }
