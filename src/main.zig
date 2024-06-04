@@ -490,5 +490,12 @@ pub fn main() !void {
     if (mode == .Zig) {
         const zig_bin_path = try std.fs.path.join(allocator, &.{ zig_root_path, ZIG_BIN_NAME });
         log.debug("Running {s}", .{zig_bin_path});
+
+        var zig_proc = std.process.Child.init(&.{ zig_bin_path, "help" }, allocator);
+        try zig_proc.spawn();
+        const res = try zig_proc.wait();
+        if (res.Exited != 0) {
+            log.err("zig returned a non-zero exit code!", .{});
+        }
     }
 }
