@@ -29,11 +29,17 @@ const ZIG_ARCHIVE_FMT = "zig-{s}-{s}.{s}";
 
 // TODO: This should be a configuration parameter so that custom/private indexes are possible.
 const ZIG_INDEX_URL = "https://ziglang.org/download/index.json";
-const ZIG_BIN_NAME_HASH = hash.Crc32.hash("zig");
+const ZIG_BIN_NAME_HASH = switch (builtin.os.tag) {
+    .windows => hash.Crc32.hash("zig.exe"),
+    else => hash.Crc32.hash("zig"),
+};
 
 // TODO: This should be a configuration parameter so that custom/private indexes are possible.
 const ZLS_INDEX_URL = "https://zigtools-releases.nyc3.digitaloceanspaces.com/zls/index.json";
-const ZLS_BIN_NAME_HASH = hash.Crc32.hash("zls");
+const ZLS_BIN_NAME_HASH = switch (builtin.os.tag) {
+    .windows => hash.Crc32.hash("zls.exe"),
+    else => hash.Crc32.hash("zls"),
+};
 
 const Mode = enum { Zig, Zls, Ziege };
 const Command = enum { Update, Fetch, SetDefault };
@@ -315,7 +321,6 @@ const ReleaseIndexes = struct {
             try downloadReleaseIndex(ZLS_INDEX_URL, &zls_pkg_dir, wget);
         }
 
-        log.debug("Downloading {s}", .{ZLS_INDEX_URL});
         const zig_index = try loadIndexJson(locations.allocator, &zig_pkg_dir);
         const zls_index = try loadIndexJson(locations.allocator, &zls_pkg_dir);
 
@@ -384,15 +389,38 @@ fn fetchZig(archive_url: []const u8, archive_path: []const u8, wget: *Wget) !voi
 fn unpackZig(allocator: Allocator, root_path: []const u8, archive_path: []const u8) !void {
     log.info("Unpacking Zig release to: {s}", .{root_path});
 
-    var root_dir = try std.fs.openDirAbsolute(root_path, .{});
-    defer root_dir.close();
-
     var compressed_archive = try std.fs.openFileAbsolute(archive_path, .{});
     defer compressed_archive.close();
+
     if (builtin.os.tag == .windows) {
+        // Windows releases are provided as zip archives as this is the Windows standard archive format.
+        // Unfortunately there isn't any way to strip the prefix during extraction, so what we do instead
+        // is extract and rename.
+
+        const pkgs_path = std.fs.path.dirname(root_path).?;
+        const pkg_root_name = std.fs.path.basename(root_path);
+        const archive_name = std.fs.path.stem(archive_path);
+
+        var pkgs_dir = try std.fs.openDirAbsolute(pkgs_path, .{});
+        defer pkgs_dir.close();
+
+        // Extract the zip contents to the package root, which will create a directory which matches the archive stem
         const stream = compressed_archive.seekableStream();
-        try zip.extract(root_dir, stream, .{});
+        try zip.extract(pkgs_dir, stream, .{});
+
+        // Rename the extracted directory to just the version
+        log.debug("Renaming {s} => {s}", .{ archive_name, pkg_root_name });
+        try pkgs_dir.rename(archive_name, pkg_root_name);
     } else {
+        // On non-windows systems we can use tar and strip the prefix, so much easier. So we create our target
+        // folder first, and extract directly into it.
+
+        try ensureDirectoryExists(root_path);
+        errdefer std.fs.deleteDirAbsolute(root_path) catch @panic("Unable to remove zig root path after an error.");
+
+        var root_dir = try std.fs.openDirAbsolute(root_path, .{});
+        defer root_dir.close();
+
         var decompressor = try xz.decompress(allocator, compressed_archive.reader());
         try tar.pipeToFileSystem(root_dir, decompressor.reader(), .{ .strip_components = 1 });
     }
@@ -435,11 +463,8 @@ pub fn main() !void {
     log.debug("Zig root: {s}", .{zig_root_path});
 
     if (!try dirExists(zig_root_path)) {
-        try ensureDirectoryExists(zig_root_path);
-        errdefer std.fs.deleteDirAbsolute(zig_root_path) catch @panic("Unable to remove zig root path after an error.");
-
         const archive_filename = try std.fmt.allocPrint(allocator, ZIG_ARCHIVE_FMT, .{ URL_PLATFORM, zig_version, ARCHIVE_EXT });
-        const archive_path = try std.fs.path.join(allocator, &.{ zig_root_path, archive_filename });
+        const archive_path = try std.fs.path.join(allocator, &.{ locations.zig_pkgs, archive_filename });
 
         if (releases.containsZigRelease(zig_version)) {
             const release_info = try releases.getReleaseInfo(zig_version);
