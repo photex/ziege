@@ -209,15 +209,15 @@ pub const ReleaseManager = struct {
         };
     }
 
-    fn fetchZig(self: *Self, archive_url: []const u8, archive_path: []const u8) !void {
+    fn downloadTo(self: *Self, url: []const u8, dest_path: []const u8) !void {
         const stdout = std.io.getStdOut().writer();
-        const archive = try std.fs.createFileAbsolute(archive_path, .{});
-        defer archive.close();
+        const dest_file = try std.fs.createFileAbsolute(dest_path, .{});
+        defer dest_file.close();
 
-        const uri = try std.Uri.parse(archive_url);
+        const uri = try std.Uri.parse(url);
 
-        try stdout.print("Downloading {s}\n", .{archive_url});
-        try self.wget.toFile(uri, archive);
+        try stdout.print("Downloading {s}\n", .{url});
+        try self.wget.toFile(uri, dest_file);
     }
 
     fn unpackZig(self: *Self, root_path: []const u8, archive_path: []const u8) !void {
@@ -269,13 +269,13 @@ pub const ReleaseManager = struct {
 
         if (self.containsZigRelease(version)) {
             const release_info = try self.getReleaseInfo(version);
-            try self.fetchZig(release_info.tarball, archive_path);
+            try self.downloadTo(release_info.tarball, archive_path);
             // TODO: Tagged releases can be easily verified after download.
             //       - shasum
             //       - size
         } else {
             const nightly_url = try self.getNightlyReleaseUrl(version);
-            try self.fetchZig(nightly_url, archive_path);
+            try self.downloadTo(nightly_url, archive_path);
         }
         defer std.fs.deleteFileAbsolute(archive_path) catch @panic("Failed to remove downloaded archive.");
 
