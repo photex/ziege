@@ -32,16 +32,29 @@ Ziege is still in it's very early stagess but can hopefully be as useful for you
 - [ ] Add symlinks in a repo (ex: `<repo>/tools/zig`) for folks that do not wish to use Ziege as a proxy
 - [ ] Be your one stop shop for all your Zig tool needs!
 
+## Installing
+
+Download a binary for your platform from one of the [releases](https://github.com/photex/ziege/releases) and place it somewhere in PATH.
+
+```sh
+wget https://github.com/photex/ziege/releases/download/v0.1.0/ziege-linux-x86_64 -O ziege
+```
+
+Make a symlink or a copy named `zig`.
+
+```sh
+ln -s ziege zig
+```
+
+And now you can use Zig as you normally would with the benefit of having toolchains automatically downloaded for you.
+
+Currently I'm testing ziege on Windows 11 and Linux (AlmaLinux 9.4) and using it to build ziege itself. I've tested zeige with some other repositories such as [zig-gamedev](https://github.com/zig-gamedev/zig-gamedev), [sokol-zig-imgui-sample](https://github.com/floooh/sokol-zig-imgui-sample/), and the [delve-framework](https://github.com/Interrupt/delve-framework/).
+
 ## Modes
 
 ### Zig mode
 
 In this mode, ziege is a proxy for a specific zig release. When ziege is named 'zig' or if run using a symlink named 'zig' this mode is activated.
-
-```sh
-ln -s ziege zig
-./zig help
-```
 
 Ziege will try and determine the zig version to proxy by reading a file named `.zigversion` in the current working directory. If that is not found *ziege will create this file and use the current nightly version of zig*.
 
