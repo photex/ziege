@@ -23,9 +23,9 @@ Ziege is just a nascent proof-of-concept at this point but will hopefully be use
 - [ ] Simple proxy for Zls
 - [ ] Manage pinned Zig version
   - [ ] Update nightly version
-- [ ] List installed Zig versions
+- [x] List installed Zig versions
+- [x] Install Zig toolchains independent of projects
 - [ ] Remove installed Zig versions
-- [ ] Install Zig toolchains independent of projects
 - [ ] Gracefully fail in the face of edge cases, network failures, and other problems
 - [ ] Configure a default Zig toolchain version for when a repo doesn't specify one
 - [ ] Allow configuration of alternate Zig and Zls indexes.

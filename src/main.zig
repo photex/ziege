@@ -205,11 +205,47 @@ pub fn zls(args: *Args, config: *Configuration) !void {
 /// Top level for "ziege" mode
 pub fn ziege(args: *Args, config: *Configuration) !void {
     log.debug("Running in Ziege mode.", .{});
-    _ = args;
-    _ = config;
-    const stderr = std.io.getStdErr().writer();
-    try stderr.print("Ziege mode is not yet implemented.\n", .{});
-    std.process.exit(1);
+
+    const stdout = std.io.getStdOut().writer();
+    const stderr = std.io.getStdOut().writer();
+
+    if (args.process_args.len == 1) {
+        try stderr.print("Usage: ziege [list | install <version> | remove <version>]\n", .{});
+        std.process.exit(1);
+    }
+
+    const crc = std.hash.Crc32.hash;
+
+    switch (crc(args.process_args[1])) {
+        crc("list") => {
+            const pkg_dir = try std.fs.openDirAbsolute(config.locations.zig_pkgs, .{ .iterate = true });
+            var iter = pkg_dir.iterate();
+            while (try iter.next()) |entry| {
+                if (entry.kind == .directory) {
+                    try stdout.print("{s}\n", .{entry.name});
+                }
+            }
+        },
+        crc("install") => {
+            if (args.process_args.len != 3) {
+                try stderr.print("Version missing!\nUsage: ziege install <version>\n", .{});
+                std.process.exit(1);
+            }
+            const zig_version = args.process_args[2];
+
+            const zig_root_path = try config.locations.getZigRootPath(zig_version);
+            if (try utils.dirExists(zig_root_path)) {
+                try stderr.print("Zig {s} is already installed.\n", .{zig_version});
+                std.process.exit(1);
+            }
+
+            var releases = try ReleaseManager.init(config);
+            defer releases.deinit();
+
+            try releases.installZigVersion(zig_version);
+        },
+        else => try stderr.print("UNIMPLEMENTED\n", .{}),
+    }
 }
 
 /// Determine which mode we're running in and dispatch to appropriate top-level implementation
