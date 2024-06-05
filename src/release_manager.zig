@@ -209,27 +209,6 @@ pub const ReleaseManager = struct {
         };
     }
 
-    pub fn installZigVersion(self: *Self, version: []const u8) !void {
-        const archive_filename = try std.fmt.allocPrint(self.config.allocator, globals.ZIG_ARCHIVE_FMT, .{ globals.URL_PLATFORM, version, globals.ARCHIVE_EXT });
-        const archive_path = try std.fs.path.join(self.config.allocator, &.{ self.config.locations.zig_pkgs, archive_filename });
-
-        const zig_root_path = try self.config.locations.getZigRootPath(version);
-
-        if (self.containsZigRelease(version)) {
-            const release_info = try self.getReleaseInfo(version);
-            try self.fetchZig(release_info.tarball, archive_path);
-            // TODO: Tagged releases can be easily verified after download.
-            //       - shasum
-            //       - size
-        } else {
-            const nightly_url = try self.getNightlyReleaseUrl(version);
-            try self.fetchZig(nightly_url, archive_path);
-        }
-        defer std.fs.deleteFileAbsolute(archive_path) catch @panic("Failed to remove downloaded archive.");
-
-        try self.unpackZig(zig_root_path, archive_path);
-    }
-
     fn fetchZig(self: *Self, archive_url: []const u8, archive_path: []const u8) !void {
         const stdout = std.io.getStdOut().writer();
         const archive = try std.fs.createFileAbsolute(archive_path, .{});
@@ -280,5 +259,33 @@ pub const ReleaseManager = struct {
             var decompressor = try xz.decompress(self.config.allocator, compressed_archive.reader());
             try tar.pipeToFileSystem(root_dir, decompressor.reader(), .{ .strip_components = 1 });
         }
+    }
+
+    pub fn installZigVersion(self: *Self, version: []const u8) !void {
+        const archive_filename = try std.fmt.allocPrint(self.config.allocator, globals.ZIG_ARCHIVE_FMT, .{ globals.URL_PLATFORM, version, globals.ARCHIVE_EXT });
+        const archive_path = try std.fs.path.join(self.config.allocator, &.{ self.config.locations.zig_pkgs, archive_filename });
+
+        const zig_root_path = try self.config.locations.getZigRootPath(version);
+
+        if (self.containsZigRelease(version)) {
+            const release_info = try self.getReleaseInfo(version);
+            try self.fetchZig(release_info.tarball, archive_path);
+            // TODO: Tagged releases can be easily verified after download.
+            //       - shasum
+            //       - size
+        } else {
+            const nightly_url = try self.getNightlyReleaseUrl(version);
+            try self.fetchZig(nightly_url, archive_path);
+        }
+        defer std.fs.deleteFileAbsolute(archive_path) catch @panic("Failed to remove downloaded archive.");
+
+        try self.unpackZig(zig_root_path, archive_path);
+    }
+
+    pub fn uninstallZigVersion(self: *Self, version: []const u8) !void {
+        const zig_root_path = try self.config.locations.getZigRootPath(version);
+        const stdout = std.io.getStdOut().writer();
+        try stdout.print("Removing: {s}\n", .{zig_root_path});
+        try std.fs.deleteTreeAbsolute(zig_root_path);
     }
 };

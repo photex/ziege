@@ -11,7 +11,7 @@ This tool was inspired by [Bazelisk](https://github.com/bazelbuild/bazelisk)
 
 ## Feature Checklist
 
-Ziege is just a nascent proof-of-concept at this point but will hopefully be useful to you. Bug reports, feature requests, or any other sort of contribution are all greatly appreciated.
+Ziege is still in it's very early stagess but can hopefully be as useful for you as it is for me. Bug reports, feature requests, or any other sort of contribution are all greatly appreciated.
 
 - [x] Download Zig toolchain indicated by a project `.zigversion`
 - [ ] Work on major desktop platforms.
@@ -22,16 +22,50 @@ Ziege is just a nascent proof-of-concept at this point but will hopefully be use
   - [x] Allow zig version override with launcher args (ex: `+version=0.12.0`)
 - [ ] Simple proxy for Zls
 - [ ] Manage pinned Zig version
-  - [ ] Update nightly version
 - [x] List installed Zig versions
-- [x] Install Zig toolchains independent of projects
-- [ ] Remove installed Zig versions
+- [x] Add Zig toolchains
+- [x] Remove Zig toolchains
 - [ ] Gracefully fail in the face of edge cases, network failures, and other problems
 - [ ] Configure a default Zig toolchain version for when a repo doesn't specify one
 - [ ] Allow configuration of alternate Zig and Zls indexes.
 - [ ] Allow configuration of the location of Zig toolchains.
 - [ ] Add symlinks in a repo (ex: `<repo>/tools/zig`) for folks that do not wish to use Ziege as a proxy
 - [ ] Be your one stop shop for all your Zig tool needs!
+
+## Modes
+
+### Zig mode
+
+In this mode, ziege is a proxy for a specific zig release. When ziege is named 'zig' or if run using a symlink named 'zig' this mode is activated.
+
+```sh
+ln -s ziege zig
+./zig help
+```
+
+Ziege will try and determine the zig version to proxy by reading a file named `.zigversion` in the current working directory. If that is not found *ziege will create this file and use the current nightly version of zig*.
+
+You can override this version by using a "launcher arg":
+
+```sh
+zig +version=0.12.0 build run
+```
+
+In all cases, if the resolved version isn't found then it will be downloaded first.
+
+### Zls mode
+
+> **This mode is not yet implemented**
+
+### Ziege mode
+
+In this mode ziege offers some basic toolchain management commands.
+
+```sh
+ziege list
+ziege add 0.12.0
+ziege remove 0.11.0
+```
 
 ## How it works
 

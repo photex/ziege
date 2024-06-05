@@ -210,7 +210,7 @@ pub fn ziege(args: *Args, config: *Configuration) !void {
     const stderr = std.io.getStdOut().writer();
 
     if (args.process_args.len == 1) {
-        try stderr.print("Usage: ziege [list | install <version> | remove <version>]\n", .{});
+        try stderr.print("Usage: ziege [list | add <version> | remove <version>]\n", .{});
         std.process.exit(1);
     }
 
@@ -226,9 +226,9 @@ pub fn ziege(args: *Args, config: *Configuration) !void {
                 }
             }
         },
-        crc("install") => {
+        crc("add") => {
             if (args.process_args.len != 3) {
-                try stderr.print("Version missing!\nUsage: ziege install <version>\n", .{});
+                try stderr.print("No version specified!\nUsage: ziege add <version>\n", .{});
                 std.process.exit(1);
             }
             const zig_version = args.process_args[2];
@@ -244,7 +244,24 @@ pub fn ziege(args: *Args, config: *Configuration) !void {
 
             try releases.installZigVersion(zig_version);
         },
-        else => try stderr.print("UNIMPLEMENTED\n", .{}),
+        crc("remove") => {
+            if (args.process_args.len != 3) {
+                try stderr.print("No version specified!\nUsage: ziege remove <version>\n", .{});
+                std.process.exit(1);
+            }
+            const zig_version = args.process_args[2];
+            const zig_root_path = try config.locations.getZigRootPath(zig_version);
+            if (!try utils.dirExists(zig_root_path)) {
+                try stderr.print("Zig {s} is not installed!\n", .{zig_version});
+                std.process.exit(1);
+            }
+
+            var releases = try ReleaseManager.init(config);
+            defer releases.deinit();
+
+            try releases.uninstallZigVersion(zig_version);
+        },
+        else => try stderr.print("Unimplemented or unknown command\n", .{}),
     }
 }
 
