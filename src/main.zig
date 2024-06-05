@@ -144,11 +144,11 @@ fn saveZigVersion(version: []const u8) !void {
 }
 
 /// Get the current nightly version from our cached release index, and update `.zigversion`.
-// fn pinToNightlyZig(releases: *const ReleaseIndexes) ![]const u8 {
-//     const version = try releases.getZigNightlyVersion();
-//     try saveZigVersion(version);
-//     return version;
-// }
+fn pinToNightlyZig(releases: *ReleaseManager) ![]const u8 {
+    const version = try releases.getZigNightlyVersion();
+    try saveZigVersion(version);
+    return version;
+}
 
 /// Top level for "zig" mode
 pub fn zig(args: *Args, config: *Configuration) !void {
@@ -163,8 +163,11 @@ pub fn zig(args: *Args, config: *Configuration) !void {
     } else {
         const repo_version = try loadZigVersion(config);
         if (repo_version == null) {
-            // TODO: Get nightly *or* default
-            @panic("UNIMPLEMENTED! Please specify +version=... or create a .zigversion file.");
+            // TODO: Get nightly *or* use a default version.
+            // NOTE: It's possible that we end up instantiating the release manager twice and that feels itchy.
+            var releases = try ReleaseManager.init(config);
+            defer releases.deinit();
+            zig_version = try pinToNightlyZig(&releases);
         } else {
             zig_version = repo_version.?;
         }
@@ -204,6 +207,9 @@ pub fn ziege(args: *Args, config: *Configuration) !void {
     log.debug("Running in Ziege mode.", .{});
     _ = args;
     _ = config;
+    const stderr = std.io.getStdErr().writer();
+    try stderr.print("Ziege mode is not yet implemented.\n", .{});
+    std.process.exit(1);
 }
 
 /// Determine which mode we're running in and dispatch to appropriate top-level implementation

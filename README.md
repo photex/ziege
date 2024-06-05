@@ -19,6 +19,7 @@ Ziege is just a nascent proof-of-concept at this point but will hopefully be use
   - [x] Linux
   - [ ] MacOS (*not yet tested*)
 - [x] Simple proxy for Zig
+  - [x] Allow zig version override with launcher args (ex: `+version=0.12.0`)
 - [ ] Simple proxy for Zls
 - [ ] Manage pinned Zig version
   - [ ] Update nightly version
