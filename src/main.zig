@@ -202,15 +202,17 @@ pub fn zls(args: *Args, config: *Configuration) !void {
     std.process.exit(1);
 }
 
+const USAGE = "Usage: ziege [list | add <version> | remove <version>]\n";
+
 /// Top level for "ziege" mode
 pub fn ziege(args: *Args, config: *Configuration) !void {
     log.debug("Running in Ziege mode.", .{});
 
     const stdout = std.io.getStdOut().writer();
-    const stderr = std.io.getStdOut().writer();
+    const stderr = std.io.getStdErr().writer();
 
     if (args.process_args.len == 1) {
-        try stderr.print("Usage: ziege [list | add <version> | remove <version>]\n", .{});
+        try stdout.print(USAGE, .{});
         std.process.exit(1);
     }
 
@@ -261,7 +263,13 @@ pub fn ziege(args: *Args, config: *Configuration) !void {
 
             try releases.uninstallZigVersion(zig_version);
         },
-        else => try stderr.print("Unimplemented or unknown command\n", .{}),
+        crc("help") => {
+            try stdout.print(USAGE, .{});
+        },
+        else => {
+            try stdout.print(USAGE, .{});
+            std.process.exit(1);
+        },
     }
 }
 
