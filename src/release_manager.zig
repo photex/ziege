@@ -115,6 +115,22 @@ fn downloadReleaseIndex(url: []const u8, pkg_root: *Dir, wget: *Wget) !void {
     try wget.toFile(uri, cache_file);
 }
 
+fn loadIndex(url: []const u8, pkg_root: []const u8, wget: *Wget) !json.Parsed(json.Value) {
+    var pkg_dir = try std.fs.openDirAbsolute(pkg_root, .{});
+    defer pkg_dir.close();
+
+    const index_mtime = try indexModTime(&pkg_dir);
+
+    const now = std.time.nanoTimestamp();
+    const mod_duration = now - index_mtime;
+    if (mod_duration > std.time.ns_per_day) {
+        log.debug("Downloading index {s}", .{url});
+        try downloadReleaseIndex(url, &pkg_dir, &wget);
+    }
+
+    return try loadIndexJson(wget.allocator, &pkg_dir);
+}
+
 /// Pinned/Stable releases get full entries in the release index and we use this information rather than deriving our own urls.
 /// We also take extra steps to verify download sizes and checksums.
 const ZigReleaseInfo = struct {
@@ -137,34 +153,10 @@ pub const ReleaseManager = struct {
     zls_index: json.Parsed(json.Value),
 
     pub fn init(config: *const Configuration) !Self {
-        const now = std.time.nanoTimestamp();
-
         var wget = try Wget.init(config.allocator);
 
-        var zig_pkg_dir = try std.fs.openDirAbsolute(config.locations.zig_pkgs, .{});
-        defer zig_pkg_dir.close();
-
-        var zls_pkg_dir = try std.fs.openDirAbsolute(config.locations.zls_pkgs, .{});
-        defer zls_pkg_dir.close();
-
-        const zig_index_mtime = try indexModTime(&zig_pkg_dir);
-        const zls_index_mtime = try indexModTime(&zls_pkg_dir);
-
-        // If the mtime of our index cache is greater than 24 hours ago, we download the index before loading it.
-        const zig_mod_duration = now - zig_index_mtime;
-        if (zig_mod_duration > std.time.ns_per_day) {
-            log.debug("Downloading {s}", .{globals.DEFAULT_ZIG_INDEX_URL});
-            try downloadReleaseIndex(globals.DEFAULT_ZIG_INDEX_URL, &zig_pkg_dir, &wget);
-        }
-
-        const zls_mod_duration = now - zls_index_mtime;
-        if (zls_mod_duration > std.time.ns_per_day) {
-            log.debug("Downloading {s}", .{globals.DEFAULT_ZLS_INDEX_URL});
-            try downloadReleaseIndex(globals.DEFAULT_ZLS_INDEX_URL, &zls_pkg_dir, &wget);
-        }
-
-        const zig_index = try loadIndexJson(config.allocator, &zig_pkg_dir);
-        const zls_index = try loadIndexJson(config.allocator, &zls_pkg_dir);
+        const zig_index = try loadIndex(globals.DEFAULT_ZIG_INDEX_URL, config.locations.zig_pkgs, &wget);
+        const zls_index = try loadIndex(globals.DEFAULT_ZLS_INDEX_URL, config.locations.zls_pkgs, &wget);
 
         return Self{
             .config = config,
@@ -322,5 +314,12 @@ pub const ReleaseManager = struct {
         const stdout = std.io.getStdOut().writer();
         try stdout.print("Removing: {s}\n", .{zig_root_path});
         try std.fs.deleteTreeAbsolute(zig_root_path);
+    }
+
+    pub fn updateIndex(self: *Self) !void {
+        log.debug("Updating Zig release index", .{});
+        downloadReleaseIndex(self.config.zig_index_url, self.config.locations.zig_pkgs, &self.wget);
+        log.debug("Updating Zls release index", .{});
+        downloadReleaseIndex(self.config.zls_index_url, self.config.locations.zls_pkgs, &self.wget);
     }
 };
