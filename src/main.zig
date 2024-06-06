@@ -22,11 +22,13 @@ const ReleaseManager = @import("./release_manager.zig").ReleaseManager;
 
 const log = globals.log;
 
+const VERSION = "0.2.0-dev";
+
 //-----------------------------------------------------------------------------
 
 const Mode = enum { Zig, Zls, Ziege };
 const Command = enum { Update, Install, Remove, SetDefault };
-const LauncherArg = enum { Version };
+const LauncherArg = enum { UseVersion, SetVersion };
 
 const Args = struct {
     const Self = @This();
@@ -84,15 +86,28 @@ const Args = struct {
     pub fn parseLauncherArgs(self: *const Self) !std.AutoHashMap(LauncherArg, []const u8) {
         var map = std.AutoHashMap(LauncherArg, []const u8).init(self.allocator);
         for (self.launcher_args.items) |arg| {
+            const crc = std.hash.Crc32.hash;
             var entry = std.mem.splitSequence(u8, arg, "=");
-            if (std.mem.eql(u8, entry.first(), "+version")) {
-                const val = entry.next();
-                if (val == null) {
-                    const stderr = std.io.getStdErr().writer();
-                    try stderr.print("Version override requires an argument! Example: +version=0.12.0\n", .{});
-                    std.process.exit(1);
-                }
-                try map.put(LauncherArg.Version, val.?);
+            switch(crc(entry.first())) {
+                crc("+version") => {
+                    const val = entry.next();
+                    if (val == null) {
+                        const stderr = std.io.getStdErr().writer();
+                        try stderr.print("Version override requires an argument! Example: +version=0.12.0\n", .{});
+                        std.process.exit(1);
+                    }
+                    try map.put(LauncherArg.UseVersion, val.?);
+                },
+                crc("+set-version") => {
+                    const val = entry.next();
+                    if (val == null) {
+                        const stderr = std.io.getStdErr().writer();
+                        try stderr.print("Setting the version requires an argument! Example: +set-version=0.12.0\n", .{});
+                        std.process.exit(1);
+                    }
+                    try map.put(LauncherArg.SetVersion, val.?);
+                },
+                else => {},
             }
         }
         return map;
@@ -157,9 +172,13 @@ pub fn zig(args: *Args, config: *Configuration) !void {
     const launcher_args = try args.parseLauncherArgs();
 
     var zig_version: []const u8 = undefined;
-    if (launcher_args.contains(.Version)) {
-        const override_version = launcher_args.getPtr(.Version);
+    if (launcher_args.contains(.UseVersion)) {
+        const override_version = launcher_args.getPtr(.UseVersion);
         zig_version = try config.allocator.dupe(u8, override_version.?.*);
+    } else if (launcher_args.contains(.SetVersion)) {
+        const new_version = launcher_args.getPtr(.SetVersion);
+        zig_version = try config.allocator.dupe(u8, new_version.?.*);
+        try saveZigVersion(zig_version);
     } else {
         const repo_version = try loadZigVersion(config);
         if (repo_version == null) {
@@ -202,7 +221,7 @@ pub fn zls(args: *Args, config: *Configuration) !void {
     std.process.exit(1);
 }
 
-const USAGE = "Usage: ziege [list | add <version> | remove <version>]\n";
+const USAGE = "Usage: ziege [list | add <version> | remove <version> | set-version <version> | help]";
 
 /// Top level for "ziege" mode
 pub fn ziege(args: *Args, config: *Configuration) !void {
@@ -212,7 +231,7 @@ pub fn ziege(args: *Args, config: *Configuration) !void {
     const stderr = std.io.getStdErr().writer();
 
     if (args.process_args.len == 1) {
-        try stdout.print(USAGE, .{});
+        try stdout.print("{s}", .{USAGE});
         std.process.exit(1);
     }
 
@@ -263,11 +282,35 @@ pub fn ziege(args: *Args, config: *Configuration) !void {
 
             try releases.uninstallZigVersion(zig_version);
         },
+        crc("set-version") => {
+            if (args.process_args.len != 3) {
+                try stderr.print("No version specified!\nUsage: ziege set-version <version>\n", .{});
+                std.process.exit(1);
+            }
+            const zig_version = args.process_args[2];
+            const zig_root_path = try config.locations.getZigRootPath(zig_version);
+            if (!try utils.dirExists(zig_root_path)) {
+                var releases = try ReleaseManager.init(config);
+                defer releases.deinit();
+
+                try releases.installZigVersion(zig_version);
+            }
+            try saveZigVersion(zig_version);
+        },
+        crc("version") => {
+            try stdout.print("{s}\n", .{VERSION});
+        },
         crc("help") => {
-            try stdout.print(USAGE, .{});
+            const help_msg =
+                \\  list - List installed Zig versions.
+                \\  add <version> - Install the specified Zig version.
+                \\  remove <version> - Remove the specified Zig version.
+                \\  set-version <version> - Update .zigversion and install the specified version if needed.
+            ;
+            try stdout.print("Ziege v{s}\n{s}\n\n{s}\n\n", .{VERSION, USAGE, help_msg});
         },
         else => {
-            try stdout.print(USAGE, .{});
+            try stdout.print("{s}\n", .{USAGE});
             std.process.exit(1);
         },
     }

@@ -21,7 +21,7 @@ Ziege is still in it's very early stagess but can hopefully be as useful for you
 - [x] Simple proxy for Zig
   - [x] Allow zig version override with launcher args (ex: `+version=0.12.0`)
 - [ ] Simple proxy for Zls
-- [ ] Manage pinned Zig version
+- [x] Update pinned Zig version
 - [x] List installed Zig versions
 - [x] Add Zig toolchains
 - [x] Remove Zig toolchains
@@ -64,6 +64,12 @@ You can override this version by using a "launcher arg":
 zig +version=0.12.0 build run
 ```
 
+In the event you want to always use this version you can have ziege update your .zigversion file:
+
+```sh
+zig +set-version=0.12.0 build run
+```
+
 In all cases, if the resolved version isn't found then it will be downloaded first.
 
 ### Zls mode
@@ -78,7 +84,11 @@ In this mode ziege offers some basic toolchain management commands.
 ziege list
 ziege add 0.12.0
 ziege remove 0.11.0
+ziege set-version 0.12.0
+ziege help
 ```
+
+When using `set-version` to update your .zigversion file, the specified toolchain will be downloaded if it isn't already installed.
 
 ## How it works
 
