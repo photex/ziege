@@ -188,8 +188,13 @@ pub const ReleaseManager = struct {
     }
 
     /// Return a url where the nightly release can be downloaded
-    fn getNightlyReleaseUrl(self: *const Self, version: []const u8) ![]u8 {
+    fn getNightlyZigReleaseUrl(self: *const Self, version: []const u8) ![]u8 {
         return try std.fmt.allocPrint(self.config.allocator, globals.ZIG_NIGHTLY_URL_FMT, .{ globals.URL_PLATFORM, version, globals.ARCHIVE_EXT });
+    }
+
+    fn getNightlyZlsReleaseUrl(self: *const Self) ![]u8 {
+        const version = self.zls_index.value.object.getPtr("latest").?.string;
+        return try std.fmt.allocPrint(self.config.allocator, globals.ZLS_NIGHTLY_URL_FMT, .{ version, globals.JSON_PLATFORM, globals.ZLS_BIN_NAME });
     }
 
     /// When you pin to nightly, you will end up with a version that isn't present in the index perpetually.
@@ -199,7 +204,7 @@ pub const ReleaseManager = struct {
     }
 
     /// Get the extended release information for a pinned Zig version.
-    fn getReleaseInfo(self: *const Self, version: []const u8) !ZigReleaseInfo {
+    fn getZigReleaseInfo(self: *const Self, version: []const u8) !ZigReleaseInfo {
         const version_object = self.zig_index.value.object.getPtr(version).?;
         const info_object = version_object.object.getPtr(globals.JSON_PLATFORM).?;
         return ZigReleaseInfo{
@@ -261,25 +266,55 @@ pub const ReleaseManager = struct {
         }
     }
 
+    fn isNightlyZigVersion(self: *Self, version: []const u8) bool {
+        const crc = std.hash.Crc32.hash;
+        switch (crc(version)) {
+            crc("master"), crc("nightly") => return true,
+            else => return !self.containsZigRelease(version),
+        }
+    }
+
     pub fn installZigVersion(self: *Self, version: []const u8) !void {
         const archive_filename = try std.fmt.allocPrint(self.config.allocator, globals.ZIG_ARCHIVE_FMT, .{ globals.URL_PLATFORM, version, globals.ARCHIVE_EXT });
         const archive_path = try std.fs.path.join(self.config.allocator, &.{ self.config.locations.zig_pkgs, archive_filename });
 
         const zig_root_path = try self.config.locations.getZigRootPath(version);
 
-        if (self.containsZigRelease(version)) {
-            const release_info = try self.getReleaseInfo(version);
+        const is_nightly_version = self.isNightlyZigVersion(version);
+
+        if (is_nightly_version) {
+            const nightly_url = try self.getNightlyZigReleaseUrl(version);
+            try self.downloadTo(nightly_url, archive_path);
+        } else {
+            const release_info = try self.getZigReleaseInfo(version);
             try self.downloadTo(release_info.tarball, archive_path);
             // TODO: Tagged releases can be easily verified after download.
             //       - shasum
             //       - size
-        } else {
-            const nightly_url = try self.getNightlyReleaseUrl(version);
-            try self.downloadTo(nightly_url, archive_path);
         }
         defer std.fs.deleteFileAbsolute(archive_path) catch @panic("Failed to remove downloaded archive.");
 
         try self.unpackZig(zig_root_path, archive_path);
+
+        try self.installZls(zig_root_path, is_nightly_version);
+    }
+
+    fn installZls(self: *Self, zig_root_path: []const u8, nightly: bool) !void {
+        //const zig_version = std.fs.path.basename(zig_root_path);
+        const zls_path = try std.fs.path.join(self.config.allocator, &.{ zig_root_path, globals.ZLS_BIN_NAME });
+        if (nightly) {
+            const zls_url = try self.getNightlyZlsReleaseUrl();
+            try self.downloadTo(zls_url, zls_path);
+
+            const zls_bin = try std.fs.openFileAbsolute(zls_path, .{});
+            defer zls_bin.close();
+            if (builtin.os.tag != .windows) {
+                const exec_mode = 0o755;
+                try zls_bin.chmod(exec_mode);
+            }
+        } else {
+            log.warn("Installing stable ZLS versions are not yet implemented.\n", .{});
+        }
     }
 
     pub fn uninstallZigVersion(self: *Self, version: []const u8) !void {

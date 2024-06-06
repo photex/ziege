@@ -11,6 +11,16 @@
             "preLaunchTask": "build"
         },
         {
+            "name": "ziege zig-mode (vs)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceRoot}/zig-out/bin/zig",
+            "args": [],
+            "environment": [],
+            "cwd": "${workspaceRoot}",
+            //"preLaunchTask": "build"
+        },
+        {
             "name": "ziege (gdb)",
             "type": "cppdbg",
             "request": "launch",
