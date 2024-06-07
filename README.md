@@ -14,13 +14,15 @@ This tool was inspired by [Bazelisk](https://github.com/bazelbuild/bazelisk)
 Ziege is still in it's very early stagess but can hopefully be as useful for you as it is for me. Bug reports, feature requests, or any other sort of contribution are all greatly appreciated.
 
 - [x] Download Zig toolchain indicated by a project `.zigversion`
-- [ ] Work on major desktop platforms.
+- [ ] Works on major desktop platforms.
   - [x] Windows
   - [x] Linux
-  - [ ] MacOS (*not yet tested*)
+  - [ ] MacOS (*Not yet tested. Help appreciated!*)
+- [ ] Works on more esoteric platforms.
+  - [ ] Haiku :D
 - [x] Simple proxy for Zig
   - [x] Allow zig version override with launcher args (ex: `+version=0.12.0`)
-- [ ] Simple proxy for Zls
+- [x] Simple proxy for Zls (Nightly only)
 - [x] Update pinned Zig version
 - [x] List installed Zig versions
 - [x] Add Zig toolchains
@@ -50,11 +52,14 @@ And now you can use Zig as you normally would with the benefit of having toolcha
 
 Currently I'm testing ziege on Windows 11 and Linux (AlmaLinux 9.4) and using it to build ziege itself. I've tested zeige with some other repositories such as [zig-gamedev](https://github.com/zig-gamedev/zig-gamedev), [sokol-zig-imgui-sample](https://github.com/floooh/sokol-zig-imgui-sample/), and the [delve-framework](https://github.com/Interrupt/delve-framework/).
 
+> Note for cmd.exe users: For whatever reason, a symlink or copy of ziege.exe that is renamed to zig.exe or zls.exe will always get resolved as 'ziege.exe' when running the program. It only seems to affect you when you let cmd.exe resolve their location via %PATH%. If you use an absolute path to them *including the .exe file extension* then it would work.
+> As a workaround for that (if you aren't willing to use pwsh/powershell) I have added two batch files to this repo that you can place somewhere in your %PATH% instead.
+
 ## Modes
 
 ### Zig mode
 
-In this mode, ziege is a proxy for a specific zig release. When ziege is named 'zig' or if run using a symlink named 'zig' this mode is activated.
+In this mode, ziege is a proxy for a specific zig release. This mode is activated when ziege is named 'zig' (either via a symlink or by making a copy), or if you run ziege with the `+zig` launcher arg.
 
 Ziege will try and determine the zig version to proxy by reading a file named `.zigversion` in the current working directory. If that is not found *ziege will create this file and use the current nightly version of zig*.
 
@@ -74,7 +79,7 @@ In all cases, if the resolved version isn't found then it will be downloaded fir
 
 ### Zls mode
 
-> **This mode is not yet implemented**
+In this mode, ziege is a proxy for the zls associated with your specified zig version. This mode is activated when ziege is named 'zls' (either via a symlink or by making a copy), or if you run ziege with the `+zls` launcher arg.
 
 ### Ziege mode
 
