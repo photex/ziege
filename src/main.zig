@@ -12,8 +12,6 @@ const Dir = std.fs.Dir;
 const File = std.fs.File;
 const path = std.fs.path;
 
-const ArgList = std.ArrayList([]u8);
-
 const globals = @import("./globals.zig");
 const utils = @import("./utils.zig");
 
@@ -29,6 +27,9 @@ const VERSION = "0.2.0-dev";
 const Mode = enum { Zig, Zls, Ziege };
 const Command = enum { Update, Install, Remove, SetDefault };
 const LauncherArg = enum { UseVersion, SetVersion };
+
+const ArgList = std.ArrayList([]u8);
+const LauncherArgs = std.AutoHashMap(LauncherArg, []const u8);
 
 const Args = struct {
     const Self = @This();
@@ -48,7 +49,7 @@ const Args = struct {
         const bin_name = path.basename(args[0]);
         const bin_name_hash = std.hash.Crc32.hash(bin_name);
 
-        const mode: Mode = switch (bin_name_hash) {
+        var mode: Mode = switch (bin_name_hash) {
             globals.ZIG_BIN_NAME_HASH => .Zig,
             globals.ZLS_BIN_NAME_HASH => .Zls,
             else => .Ziege,
@@ -68,7 +69,17 @@ const Args = struct {
         for (args[1..]) |arg| {
             const copy = try allocator.dupeZ(u8, arg);
             if (arg[0] == '+') {
-                try launcher_args.append(copy);
+                // To help address the edge-case of running ziege under cmd.exe on Windows, I'm adding these
+                // escape hatches to activate the other modes without needing to copy or symlink the binary.
+                // This should let us write batch scripts as part of the release process for windows and it
+                // should work equally for powershell and cmd.exe
+                if (std.mem.eql(u8, "+zig", arg)) {
+                    mode = .Zig;
+                } else if (std.mem.eql(u8, "+zls", arg)) {
+                    mode = .Zls;
+                } else {
+                    try launcher_args.append(copy);
+                }
             } else {
                 try tool_args.append(copy);
             }
@@ -83,12 +94,12 @@ const Args = struct {
         };
     }
 
-    pub fn parseLauncherArgs(self: *const Self) !std.AutoHashMap(LauncherArg, []const u8) {
-        var map = std.AutoHashMap(LauncherArg, []const u8).init(self.allocator);
+    pub fn parseLauncherArgs(self: *const Self) !LauncherArgs {
+        var map = LauncherArgs.init(self.allocator);
         for (self.launcher_args.items) |arg| {
             const crc = std.hash.Crc32.hash;
             var entry = std.mem.splitSequence(u8, arg, "=");
-            switch(crc(entry.first())) {
+            switch (crc(entry.first())) {
                 crc("+version") => {
                     const val = entry.next();
                     if (val == null) {
@@ -165,12 +176,7 @@ fn pinToNightlyZig(releases: *ReleaseManager) ![]const u8 {
     return version;
 }
 
-/// Top level for "zig" mode
-pub fn zig(args: *Args, config: *Configuration) !void {
-    log.debug("Running in Zig mode.", .{});
-
-    const launcher_args = try args.parseLauncherArgs();
-
+fn zigRootPath(launcher_args: *const LauncherArgs, config: *Configuration) ![]const u8 {
     var zig_version: []const u8 = undefined;
     if (launcher_args.contains(.UseVersion)) {
         const override_version = launcher_args.getPtr(.UseVersion);
@@ -200,25 +206,28 @@ pub fn zig(args: *Args, config: *Configuration) !void {
         try releases.installZigVersion(zig_version);
     }
 
-    const zig_bin_path = try std.fs.path.join(config.allocator, &.{ zig_root_path, globals.ZIG_BIN_NAME });
-    log.debug("Running {s}", .{zig_bin_path});
-
-    try args.setToolPath(zig_bin_path);
-
-    var zig_proc = std.process.Child.init(args.tool_args.items, config.allocator);
-    try zig_proc.spawn();
-    const res = try zig_proc.wait();
-    std.process.exit(res.Exited);
+    return zig_root_path;
 }
 
-/// Top level for "zls" mode
-pub fn zls(args: *Args, config: *Configuration) !void {
-    log.debug("Running in Zls mode.", .{});
-    _ = args;
-    _ = config;
-    const stderr = std.io.getStdErr().writer();
-    try stderr.print("ZLS mode is not yet implemented.\n", .{});
-    std.process.exit(1);
+fn spawnTool(argv: *ArgList, config: *Configuration) !u8 {
+    var subproc = std.process.Child.init(argv.items, config.allocator);
+    try subproc.spawn();
+    const res = try subproc.wait();
+    return res.Exited;
+}
+
+/// Top level for our proxy modes
+pub fn runAsProxy(args: *Args, config: *Configuration, bin_name: []const u8) !void {
+    const launcher_args = try args.parseLauncherArgs();
+
+    const zig_root_path = try zigRootPath(&launcher_args, config);
+    const tool_path = try std.fs.path.join(config.allocator, &.{ zig_root_path, bin_name });
+    log.debug("Running {s}", .{tool_path});
+
+    try args.setToolPath(tool_path);
+
+    const return_code = try spawnTool(&args.tool_args, config);
+    std.process.exit(return_code);
 }
 
 const USAGE = "Usage: ziege [list | add <version> | remove <version> | set-version <version> | help]";
@@ -307,7 +316,7 @@ pub fn ziege(args: *Args, config: *Configuration) !void {
                 \\  remove <version> - Remove the specified Zig version.
                 \\  set-version <version> - Update .zigversion and install the specified version if needed.
             ;
-            try stdout.print("Ziege v{s}\n{s}\n\n{s}\n\n", .{VERSION, USAGE, help_msg});
+            try stdout.print("Ziege v{s}\n{s}\n\n{s}\n\n", .{ VERSION, USAGE, help_msg });
         },
         else => {
             try stdout.print("{s}\n", .{USAGE});
@@ -331,7 +340,13 @@ pub fn main() !void {
 
     switch (args.mode) {
         .Ziege => try ziege(&args, &config),
-        .Zig => try zig(&args, &config),
-        .Zls => try zls(&args, &config),
+        .Zig => {
+            log.debug("Running in Zig mode.", .{});
+            try runAsProxy(&args, &config, globals.ZIG_BIN_NAME);
+        },
+        .Zls => {
+            log.debug("Running in Zls mode.", .{});
+            try runAsProxy(&args, &config, globals.ZLS_BIN_NAME);
+        },
     }
 }

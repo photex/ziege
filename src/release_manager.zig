@@ -125,7 +125,7 @@ fn loadIndex(url: []const u8, pkg_root: []const u8, wget: *Wget) !json.Parsed(js
     const mod_duration = now - index_mtime;
     if (mod_duration > std.time.ns_per_day) {
         log.debug("Downloading index {s}", .{url});
-        try downloadReleaseIndex(url, &pkg_dir, &wget);
+        try downloadReleaseIndex(url, &pkg_dir, wget);
     }
 
     return try loadIndexJson(wget.allocator, &pkg_dir);
@@ -318,8 +318,8 @@ pub const ReleaseManager = struct {
 
     pub fn updateIndex(self: *Self) !void {
         log.debug("Updating Zig release index", .{});
-        downloadReleaseIndex(self.config.zig_index_url, self.config.locations.zig_pkgs, &self.wget);
+        downloadReleaseIndex(self.config.zig_index_url, self.config.locations.zig_pkgs, self.wget);
         log.debug("Updating Zls release index", .{});
-        downloadReleaseIndex(self.config.zls_index_url, self.config.locations.zls_pkgs, &self.wget);
+        downloadReleaseIndex(self.config.zls_index_url, self.config.locations.zls_pkgs, self.wget);
     }
 };
