@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Zig
+        uses: korandoru/setup-zig@v1
+        with:
+          zig-version: 0.13.0
+      - name: Windows x86_64
+        run: zig build -Doptimize=ReleaseFast -Dtarget=x86_64-windows -p _release/windows-x86_64
+      - name: Linux x86_64
+        run: |
+          zig build -Doptimize=ReleaseFast -Dtarget=x86_64-linux -p _release/linux-x86_64
+          cp _release/linux-x86_64/bin/ziege ziege-linux-x86_64
+      - name: MacOS x86_64
+        run: |
+          zig build -Doptimize=ReleaseFast -Dtarget=x86_64-macos -p _release/macos-x86_64
+          cp _release/macos-x86_64/bin/ziege ziege-macos-x86_64
+      - name: Linux aarch64
+        run: |
+          zig build -Doptimize=ReleaseFast -Dtarget=aarch64-linux -p _release/linux-aarch64
+          cp _release/linux-aarch64/bin/ziege ziege-linux-aarch64
+      - name: MacOS aarch64
+        run: |
+          zig build -Doptimize=ReleaseFast -Dtarget=aarch64-macos -p _release/macos-aarch64
+          cp _release/macos-aarch64/bin/ziege ziege-macos-aarch64
+      - name: Zip Windows Build
+        run: zip ziege-windows.zip -j _release/windows-x86_64/ziege.exe scripts/zig.bat scripts/zls.bat
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ziege-windows.zip
+            ziege-linux-x86_64
+            ziege-linux-aarch64
+            ziege-macos-x86_64
+            ziege-macos-aarch64

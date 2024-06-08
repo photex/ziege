@@ -1,3 +1,5 @@
+name: Standard Build
+
 on: push
 
 jobs:
@@ -19,4 +21,4 @@ jobs:
         with:
           name: ziege-${{matrix.target}}
           path: zig-out
-      
+
