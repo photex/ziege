@@ -19,7 +19,7 @@ pub const ZIG_BIN_NAME = switch (builtin.os.tag) {
 };
 pub const ZIG_BIN_NAME_HASH = std.hash.Crc32.hash(ZIG_BIN_NAME);
 
-pub const ZLS_NIGHTLY_URL_FMT = "https://zigtools-releases.nyc3.digitaloceanspaces.com/zls/{s}/{s}/{s}";
+pub const ZLS_BUILDS_URL_FMT = "https://zigtools-releases.nyc3.digitaloceanspaces.com/zls/{s}/{s}/{s}";
 pub const DEFAULT_ZLS_INDEX_URL = "https://zigtools-releases.nyc3.digitaloceanspaces.com/zls/index.json";
 pub const ZLS_BIN_NAME = switch (builtin.os.tag) {
     .windows => "zls.exe",

@@ -20,7 +20,7 @@ const ReleaseManager = @import("./release_manager.zig").ReleaseManager;
 
 const log = globals.log;
 
-const VERSION = "0.2.0-dev";
+const VERSION = "0.2.0";
 
 //-----------------------------------------------------------------------------
 
@@ -230,7 +230,7 @@ pub fn runAsProxy(args: *Args, config: *Configuration, bin_name: []const u8) !vo
     std.process.exit(return_code);
 }
 
-const USAGE = "Usage: ziege [list | add <version> | remove <version> | set-version <version> | help]";
+const USAGE = "Usage: ziege [list | add <version> | remove <version> | set-version <version> | update | help]";
 
 /// Top level for "ziege" mode
 pub fn ziege(args: *Args, config: *Configuration) !void {
@@ -309,12 +309,18 @@ pub fn ziege(args: *Args, config: *Configuration) !void {
         crc("version") => {
             try stdout.print("{s}\n", .{VERSION});
         },
+        crc("update") => {
+            var releases = try ReleaseManager.init(config);
+            defer releases.deinit();
+            try releases.updateIndex();
+        },
         crc("help") => {
             const help_msg =
                 \\  list - List installed Zig versions.
                 \\  add <version> - Install the specified Zig version.
                 \\  remove <version> - Remove the specified Zig version.
                 \\  set-version <version> - Update .zigversion and install the specified version if needed.
+                \\  update - Update the release indexes manually
             ;
             try stdout.print("Ziege v{s}\n{s}\n\n{s}\n\n", .{ VERSION, USAGE, help_msg });
         },

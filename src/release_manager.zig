@@ -179,14 +179,21 @@ pub const ReleaseManager = struct {
         return master.value_ptr.object.getEntry("version").?.value_ptr.string;
     }
 
+    pub fn getZlsNightlyVersion(self: *const Self) ![]const u8 {
+        return self.zls_index.value.object.getPtr("latest").?.string;
+    }
+
+    pub fn getZlsLatestStable(self: *const Self) ![]const u8 {
+        return self.zls_index.value.object.getPtr("latestTagged").?.string;
+    }
+
     /// Return a url where the nightly release can be downloaded
-    fn getNightlyZigReleaseUrl(self: *const Self, version: []const u8) ![]u8 {
+    fn getZigReleaseUrl(self: *const Self, version: []const u8) ![]u8 {
         return try std.fmt.allocPrint(self.config.allocator, globals.ZIG_NIGHTLY_URL_FMT, .{ globals.URL_PLATFORM, version, globals.ARCHIVE_EXT });
     }
 
-    fn getNightlyZlsReleaseUrl(self: *const Self) ![]u8 {
-        const version = self.zls_index.value.object.getPtr("latest").?.string;
-        return try std.fmt.allocPrint(self.config.allocator, globals.ZLS_NIGHTLY_URL_FMT, .{ version, globals.JSON_PLATFORM, globals.ZLS_BIN_NAME });
+    fn formatZlsUrl(self: *const Self, version: []const u8) ![]u8 {
+        return try std.fmt.allocPrint(self.config.allocator, globals.ZLS_BUILDS_URL_FMT, .{ version, globals.JSON_PLATFORM, globals.ZLS_BIN_NAME });
     }
 
     /// When you pin to nightly, you will end up with a version that isn't present in the index perpetually.
@@ -204,6 +211,11 @@ pub const ReleaseManager = struct {
             .shasum = info_object.object.getPtr("shasum").?.string,
             .size = try std.fmt.parseInt(u64, info_object.object.getPtr("size").?.string, 10),
         };
+    }
+
+    fn isTaggedZlsRelease(self: *const Self, version: []const u8) !bool {
+        const versions = self.zls_index.value.object.getPtr("versions").?.object;
+        return versions.contains(version);
     }
 
     fn downloadTo(self: *Self, url: []const u8, dest_path: []const u8) !void {
@@ -275,7 +287,7 @@ pub const ReleaseManager = struct {
         const is_nightly_version = self.isNightlyZigVersion(version);
 
         if (is_nightly_version) {
-            const nightly_url = try self.getNightlyZigReleaseUrl(version);
+            const nightly_url = try self.getZigReleaseUrl(version);
             try self.downloadTo(nightly_url, archive_path);
         } else {
             const release_info = try self.getZigReleaseInfo(version);
@@ -292,20 +304,27 @@ pub const ReleaseManager = struct {
     }
 
     fn installZls(self: *Self, zig_root_path: []const u8, nightly: bool) !void {
-        //const zig_version = std.fs.path.basename(zig_root_path);
+        const zig_version = std.fs.path.basename(zig_root_path);
         const zls_path = try std.fs.path.join(self.config.allocator, &.{ zig_root_path, globals.ZLS_BIN_NAME });
+        var zls_url: []const u8 = undefined;
         if (nightly) {
-            const zls_url = try self.getNightlyZlsReleaseUrl();
-            try self.downloadTo(zls_url, zls_path);
+            const zls_nightly_version = try self.getZlsNightlyVersion();
+            zls_url = try self.formatZlsUrl(zls_nightly_version);
+        } else {
+            var version = zig_version;
+            if (!try self.isTaggedZlsRelease(zig_version)) {
+                version = try self.getZlsLatestStable();
+                log.warn("Zls release index is missing an entry for version {s}. Using the latest tagged release instead: {s}", .{ zig_version, version });
+            }
+            zls_url = try self.formatZlsUrl(version);
+        }
+        try self.downloadTo(zls_url, zls_path);
 
+        if (builtin.os.tag != .windows) {
             const zls_bin = try std.fs.openFileAbsolute(zls_path, .{});
             defer zls_bin.close();
-            if (builtin.os.tag != .windows) {
-                const exec_mode = 0o755;
-                try zls_bin.chmod(exec_mode);
-            }
-        } else {
-            log.warn("Installing stable ZLS versions are not yet implemented.\n", .{});
+            const exec_mode = 0o755;
+            try zls_bin.chmod(exec_mode);
         }
     }
 
@@ -317,9 +336,18 @@ pub const ReleaseManager = struct {
     }
 
     pub fn updateIndex(self: *Self) !void {
+        const stdout = std.io.getStdOut().writer();
+        try stdout.print("Updating release indexes\n", .{});
+
+        var zig_pkg_dir = try std.fs.openDirAbsolute(self.config.locations.zig_pkgs, .{});
+        defer zig_pkg_dir.close();
+        var zls_pkg_dir = try std.fs.openDirAbsolute(self.config.locations.zls_pkgs, .{});
+        defer zls_pkg_dir.close();
+
         log.debug("Updating Zig release index", .{});
-        downloadReleaseIndex(self.config.zig_index_url, self.config.locations.zig_pkgs, self.wget);
+        try downloadReleaseIndex(self.config.zig_index_url, &zig_pkg_dir, &self.wget);
+
         log.debug("Updating Zls release index", .{});
-        downloadReleaseIndex(self.config.zls_index_url, self.config.locations.zls_pkgs, self.wget);
+        try downloadReleaseIndex(self.config.zls_index_url, &zls_pkg_dir, &self.wget);
     }
 };
