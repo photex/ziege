@@ -1,0 +1,22 @@
+on: push
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macos-latest ]
+        target: [ x86_64-linux, x86_64-windows, x86_64-macos, aarch64-linux, aarch64-macos ]
+    runs-on: ${{ matrix.os }}
+    name: Zig ${{ matrix.zig }} on ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Zig
+        uses: korandoru/setup-zig@v1
+        with:
+          zig-version: 0.13.0
+      - run: zig build -Doptimize=ReleaseFast -Dtarget=${{ matrix.target }}
+      - uses: actions/upload-artifact@4.3.3
+        with:
+          path: zig-out
+      
