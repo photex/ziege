@@ -1,0 +1,24 @@
+image: ubuntu/lts
+secrets:
+  - bd14f942-0744-4f8c-80ac-21c52cb8092e
+packages:
+  - zip
+sources:
+  - git@git.sr.ht:~photex/ziege
+artifacts:
+  - ziege-linux-aarch64
+  - ziege-linux-x86_64
+tasks:
+  - Setup: |
+      mkdir zig && cd zig
+      wget https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz
+      tar xf zig-linux-x86_64-0.13.0.tar.xz --strip-components=1
+
+  - Build: |
+      cd ziege
+      ../zig/zig build -Doptimize=ReleaseFast -Dtarget=x86_64-linux -Dcpu=x86_64+avx -p _build/x86_64
+      ../zig/zig build -Doptimize=ReleaseFast -Dtarget=aarch64-linux -p _build/aarch64
+
+  - Package: |
+      cp _build/x86_64/bin/ziege ziege-linux-x86_64
+      cp _build/aarch64/bin/ziege ziege-linux-aarch64

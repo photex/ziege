@@ -1,6 +1,10 @@
-name: Standard Build
+name: Build Release Binaries
 
-on: push
+on:
+  workflow_dispatch: # Let us manually run this sometimes
+  push:
+    tags:
+      - "v*.*.*"
 
 jobs:
   build:
