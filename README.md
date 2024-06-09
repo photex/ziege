@@ -5,7 +5,9 @@ Ziege manages zig toolchains and zls releases on your system (automatically conf
 
 Using Ziege should be totally transparent and should be the only tool you need to setup for working with Zig.
 
-This tool was inspired by [Bazelisk](https://github.com/bazelbuild/bazelisk)
+> Development is mostly happening at [Sourcehut](https://git.sr.ht/~photex/ziege). I push to github frequently enough though and releases are hosted here for the moment because, sadly, github is where people expect to find things.
+
+This tool was inspired by [Bazelisk](https://github.com/bazelbuild/bazelisk).
 
 ## Feature Checklist
 
