@@ -20,5 +20,5 @@ jobs:
       - uses: actions/upload-artifact@v4.3.3
         with:
           name: ziege-${{matrix.target}}
-          path: zig-out
+          path: zig-out/bin
 
