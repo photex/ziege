@@ -1,0 +1,24 @@
+image: ubuntu/lts
+secrets:
+  - bd14f942-0744-4f8c-80ac-21c52cb8092e
+packages:
+  - zip
+sources:
+  - git@git.sr.ht:~photex/ziege
+artifacts:
+  - ziege-macos-aarch64
+  - ziege-macos-x86_64
+tasks:
+  - setup: |
+      mkdir zig && cd zig
+      wget https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz
+      tar xf zig-linux-x86_64-0.13.0.tar.xz --strip-components=1
+
+  - build: |
+      cd ziege
+      ../zig/zig build -Doptimize=ReleaseFast -Dtarget=x86_64-macos -Dcpu=x86_64+avx -p _build/x86_64
+      ../zig/zig build -Doptimize=ReleaseFast -Dtarget=aarch64-macos -p _build/aarch64
+
+  - package: |
+      cp _build/x86_64/bin/ziege ziege-macos-x86_64
+      cp _build/aarch64/bin/ziege ziege-macos-aarch64
