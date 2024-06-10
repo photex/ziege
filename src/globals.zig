@@ -7,6 +7,7 @@ const std = @import("std");
 
 pub const INDEX_FILENAME = "index.json";
 pub const ZIGVERSION_FILENAME = ".zigversion";
+pub const ZIGVERSION_ENV_VAR = "ZIG_VERSION";
 
 /// <URL_PLATFORM>-<VERSION>.<ARCHIVE_EXT>
 pub const ZIG_NIGHTLY_URL_FMT = "https://ziglang.org/builds/zig-{s}-{s}.{s}";

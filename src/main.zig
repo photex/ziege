@@ -20,7 +20,7 @@ const ReleaseManager = @import("./release_manager.zig").ReleaseManager;
 
 const log = globals.log;
 
-const VERSION = "0.2.0";
+const VERSION = "0.3.0-dev";
 
 //-----------------------------------------------------------------------------
 
@@ -38,7 +38,7 @@ const Args = struct {
 
     process_args: []const [:0]u8,
 
-    launcher_args: ArgList,
+    launcher_args: LauncherArgs,
     tool_args: ArgList,
 
     mode: Mode,
@@ -55,8 +55,9 @@ const Args = struct {
             else => .Ziege,
         };
 
-        var launcher_args = ArgList.init(allocator);
-        try launcher_args.ensureTotalCapacity(args.len);
+        var launcher_args_list = ArgList.init(allocator);
+        defer launcher_args_list.deinit();
+        try launcher_args_list.ensureTotalCapacity(args.len);
 
         var tool_args = ArgList.init(allocator);
         try tool_args.ensureTotalCapacity(args.len);
@@ -78,12 +79,15 @@ const Args = struct {
                 } else if (std.mem.eql(u8, "+zls", arg)) {
                     mode = .Zls;
                 } else {
-                    try launcher_args.append(copy);
+                    try launcher_args_list.append(copy);
                 }
             } else {
                 try tool_args.append(copy);
             }
         }
+
+        var launcher_args = LauncherArgs.init(allocator);
+        try Self.parseLauncherArgs(&launcher_args_list, &launcher_args);
 
         return Self{
             .allocator = allocator,
@@ -94,9 +98,8 @@ const Args = struct {
         };
     }
 
-    pub fn parseLauncherArgs(self: *const Self) !LauncherArgs {
-        var map = LauncherArgs.init(self.allocator);
-        for (self.launcher_args.items) |arg| {
+    fn parseLauncherArgs(launcher_arg_list: *ArgList, map: *LauncherArgs) !void {
+        for (launcher_arg_list.items) |arg| {
             const crc = std.hash.Crc32.hash;
             var entry = std.mem.splitSequence(u8, arg, "=");
             switch (crc(entry.first())) {
@@ -107,7 +110,7 @@ const Args = struct {
                         try stderr.print("Version override requires an argument! Example: +version=0.12.0\n", .{});
                         std.process.exit(1);
                     }
-                    try map.put(LauncherArg.UseVersion, val.?);
+                    try map.put(LauncherArg.UseVersion, try map.allocator.dupe(u8, val.?));
                 },
                 crc("+set-version") => {
                     const val = entry.next();
@@ -116,12 +119,11 @@ const Args = struct {
                         try stderr.print("Setting the version requires an argument! Example: +set-version=0.12.0\n", .{});
                         std.process.exit(1);
                     }
-                    try map.put(LauncherArg.SetVersion, val.?);
+                    try map.put(LauncherArg.SetVersion, try map.allocator.dupe(u8, val.?));
                 },
                 else => {},
             }
         }
-        return map;
     }
 
     pub fn setToolPath(self: *Self, tool_path: []u8) !void {
@@ -135,7 +137,7 @@ const Args = struct {
 };
 
 /// If there is a `.zigversion` file present in the current directory, we read the contents into a buffer.
-fn loadZigVersion(config: *const Configuration) !?[]const u8 {
+fn loadZigVersion(allocator: Allocator) !?[]const u8 {
     var file = std.fs.cwd().openFile(globals.ZIGVERSION_FILENAME, .{}) catch |err| switch (err) {
         error.FileNotFound => {
             return null;
@@ -144,7 +146,7 @@ fn loadZigVersion(config: *const Configuration) !?[]const u8 {
     };
     defer file.close();
 
-    const result = try file.readToEndAlloc(config.allocator, 64);
+    const result = try file.readToEndAlloc(allocator, 64);
 
     // If a .zigversion file is edited manually instead of using ziege, then it's possible that
     // and editor will insert a newline at the end of the file. We trim the version here just in case.
@@ -159,7 +161,7 @@ fn loadZigVersion(config: *const Configuration) !?[]const u8 {
         }
     }
 
-    return try config.allocator.realloc(result, eos);
+    return try allocator.realloc(result, eos);
 }
 
 /// Write the specified version to `.zigversion` in the current working directory.
@@ -176,61 +178,81 @@ fn pinToNightlyZig(releases: *ReleaseManager) ![]const u8 {
     return version;
 }
 
-fn zigRootPath(launcher_args: *const LauncherArgs, config: *Configuration) ![]const u8 {
+fn zigVersion(args: *Args, config: *Configuration) ![]const u8 {
+    var env_map = try std.process.getEnvMap(config.allocator);
+    defer env_map.deinit();
+
+    const env_version = env_map.get(globals.ZIGVERSION_ENV_VAR);
+
     var zig_version: []const u8 = undefined;
-    if (launcher_args.contains(.UseVersion)) {
-        const override_version = launcher_args.getPtr(.UseVersion);
+    if (args.launcher_args.contains(.UseVersion)) {
+        const override_version = args.launcher_args.getPtr(.UseVersion);
         zig_version = try config.allocator.dupe(u8, override_version.?.*);
-    } else if (launcher_args.contains(.SetVersion)) {
-        const new_version = launcher_args.getPtr(.SetVersion);
+    } else if (args.launcher_args.contains(.SetVersion)) {
+        const new_version = args.launcher_args.getPtr(.SetVersion);
         zig_version = try config.allocator.dupe(u8, new_version.?.*);
         try saveZigVersion(zig_version);
+    } else if (env_version != null) {
+        zig_version = try config.allocator.dupe(u8, env_version.?);
     } else {
-        const repo_version = try loadZigVersion(config);
+        const repo_version = try loadZigVersion(config.allocator);
         if (repo_version == null) {
             // TODO: Get nightly *or* use a default version.
-            // NOTE: It's possible that we end up instantiating the release manager twice and that feels itchy.
             var releases = try ReleaseManager.init(config);
             defer releases.deinit();
-            zig_version = try pinToNightlyZig(&releases);
+            zig_version = try releases.getZigNightlyVersion();
         } else {
             zig_version = repo_version.?;
         }
     }
 
-    const zig_root_path = try config.locations.getZigRootPath(zig_version);
+    return zig_version;
+}
+
+fn zigRootPath(config: *Configuration, version: []const u8) ![]const u8 {
+    const zig_root_path = try config.locations.getZigRootPath(version);
     if (!try utils.dirExists(zig_root_path)) {
         var releases = try ReleaseManager.init(config);
         defer releases.deinit();
 
-        try releases.installZigVersion(zig_version);
+        try releases.installZigVersion(version);
     }
 
     return zig_root_path;
 }
 
-fn spawnTool(argv: *ArgList, config: *Configuration) !u8 {
+fn spawnTool(argv: *ArgList, config: *Configuration, env_map: *std.process.EnvMap) !u8 {
     var subproc = std.process.Child.init(argv.items, config.allocator);
+    subproc.env_map = env_map;
+
     try subproc.spawn();
     const res = try subproc.wait();
+
     return res.Exited;
 }
 
 /// Top level for our proxy modes
 pub fn runAsProxy(args: *Args, config: *Configuration, bin_name: []const u8) !void {
-    const launcher_args = try args.parseLauncherArgs();
+    const zig_version = try zigVersion(args, config);
 
-    const zig_root_path = try zigRootPath(&launcher_args, config);
+    const zig_root_path = try zigRootPath(config, zig_version);
     const tool_path = try std.fs.path.join(config.allocator, &.{ zig_root_path, bin_name });
     log.debug("Running {s}", .{tool_path});
 
     try args.setToolPath(tool_path);
 
-    const return_code = try spawnTool(&args.tool_args, config);
+    var env_map = try std.process.getEnvMap(config.allocator);
+    defer env_map.deinit();
+
+    try env_map.put(globals.ZIGVERSION_ENV_VAR, zig_version);
+
+    // TODO: prepend zig root to PATH
+
+    const return_code = try spawnTool(&args.tool_args, config, &env_map);
     std.process.exit(return_code);
 }
 
-const USAGE = "Usage: ziege [list | add <version> | remove <version> | set-version <version> | update | help]";
+const USAGE = "Usage: ziege [list | add <version> | remove <version> | set-version <version> | update | home | path | help]";
 
 /// Top level for "ziege" mode
 pub fn ziege(args: *Args, config: *Configuration) !void {
@@ -243,6 +265,9 @@ pub fn ziege(args: *Args, config: *Configuration) !void {
         try stdout.print("{s}", .{USAGE});
         std.process.exit(1);
     }
+
+    var releases = try ReleaseManager.init(config);
+    defer releases.deinit();
 
     const crc = std.hash.Crc32.hash;
 
@@ -269,9 +294,6 @@ pub fn ziege(args: *Args, config: *Configuration) !void {
                 std.process.exit(1);
             }
 
-            var releases = try ReleaseManager.init(config);
-            defer releases.deinit();
-
             try releases.installZigVersion(zig_version);
         },
         crc("remove") => {
@@ -286,9 +308,6 @@ pub fn ziege(args: *Args, config: *Configuration) !void {
                 std.process.exit(1);
             }
 
-            var releases = try ReleaseManager.init(config);
-            defer releases.deinit();
-
             try releases.uninstallZigVersion(zig_version);
         },
         crc("set-version") => {
@@ -296,12 +315,12 @@ pub fn ziege(args: *Args, config: *Configuration) !void {
                 try stderr.print("No version specified!\nUsage: ziege set-version <version>\n", .{});
                 std.process.exit(1);
             }
-            const zig_version = args.process_args[2];
+            var zig_version: []const u8 = args.process_args[2];
+            if (std.mem.eql(u8, zig_version, "nightly") or std.mem.eql(u8, zig_version, "master")) {
+                zig_version = try releases.getZigNightlyVersion();
+            }
             const zig_root_path = try config.locations.getZigRootPath(zig_version);
             if (!try utils.dirExists(zig_root_path)) {
-                var releases = try ReleaseManager.init(config);
-                defer releases.deinit();
-
                 try releases.installZigVersion(zig_version);
             }
             try saveZigVersion(zig_version);
@@ -310,19 +329,30 @@ pub fn ziege(args: *Args, config: *Configuration) !void {
             try stdout.print("{s}\n", .{VERSION});
         },
         crc("update") => {
-            var releases = try ReleaseManager.init(config);
-            defer releases.deinit();
             try releases.updateIndex();
+        },
+        crc("home") => {
+            try stdout.print("{s}\n", .{config.locations.app_data});
+        },
+        crc("path"), crc("zig-path") => {
+            const zig_version = try zigVersion(args, config);
+            const zig_root_path = try config.locations.getZigRootPath(zig_version);
+            try stdout.print("{s}\n", .{zig_root_path});
         },
         crc("help") => {
             const help_msg =
-                \\  list - List installed Zig versions.
-                \\  add <version> - Install the specified Zig version.
-                \\  remove <version> - Remove the specified Zig version.
-                \\  set-version <version> - Update .zigversion and install the specified version if needed.
-                \\  update - Update the release indexes manually
+                \\ Usage: ziege <COMMAND>
+                \\
+                \\ Commands:
+                \\    list - List installed Zig versions.
+                \\    add <version> - Install the specified Zig version.
+                \\    remove <version> - Remove the specified Zig version.
+                \\    set-version <version> - Update .zigversion and install the specified version if needed.
+                \\    update - Update the release indexes manually
+                \\    home - Print the path to the ziege app data directory
+                \\    path | zig-path - Print the path to the resolved Zig toolchain
             ;
-            try stdout.print("Ziege v{s}\n{s}\n\n{s}\n\n", .{ VERSION, USAGE, help_msg });
+            try stdout.print("Ziege v{s}\n{s}\n\n", .{ VERSION, help_msg });
         },
         else => {
             try stdout.print("{s}\n", .{USAGE});
