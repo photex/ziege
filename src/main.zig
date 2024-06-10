@@ -20,7 +20,7 @@ const ReleaseManager = @import("./release_manager.zig").ReleaseManager;
 
 const log = globals.log;
 
-const VERSION = "0.3.0-dev";
+const VERSION = "0.3.0";
 
 //-----------------------------------------------------------------------------
 

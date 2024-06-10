@@ -67,7 +67,7 @@ If you build a debug version there will be some extra logging output that you wo
 
 In this mode, ziege is a proxy for a specific zig release. This mode is activated when ziege is named 'zig' (either via a symlink or by making a copy), or if you run ziege with the `+zig` launcher arg.
 
-Ziege will try and determine the zig version to proxy by reading a file named `.zigversion` in the current working directory. If that is not found *ziege will create this file and use the current nightly version of zig*.
+Ziege will try and determine the zig version to proxy by reading a file named `.zigversion` in the current working directory. If that is not found *ziege will use the current nightly version of zig*.
 
 You can override this version by using a "launcher arg":
 
@@ -80,6 +80,8 @@ In the event you want to always use this version you can have ziege update your 
 ```sh
 zig +set-version=0.12.0 build run
 ```
+
+It is also possible to set the version or override `.zigversion` with the environment variable `ZIG_VERSION`. And zeige will set that env var with running zig or zls so that any call to zig as a child process that relies on finding zig in PATH will end up using the correct version (which appears to happen for 'zig build' dependencies specified as paths in build.zig.zon).
 
 In all cases, if the resolved version isn't found then it will be downloaded first.
 
