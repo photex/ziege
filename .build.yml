@@ -17,12 +17,12 @@ artifacts:
   - ziege-macos-x86_64
 
 tasks:
-  - Setup: |
+  - setup: |
       mkdir zig && cd zig
       wget https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz
       tar xf zig-linux-x86_64-0.13.0.tar.xz --strip-components=1
 
-  - Build: |
+  - build: |
       cd ziege
       ../zig/zig build -Doptimize=ReleaseFast -Dtarget=x86_64-windows -Dcpu=x86_64+avx -p _windows/x86_64
       ../zig/zig build -Doptimize=ReleaseFast -Dtarget=x86_64-linux -Dcpu=x86_64+avx -p _linux/x86_64
@@ -30,7 +30,7 @@ tasks:
       ../zig/zig build -Doptimize=ReleaseFast -Dtarget=aarch64-linux -p _linux/aarch64
       ../zig/zig build -Doptimize=ReleaseFast -Dtarget=aarch64-macos -p _macos/aarch64
 
-  - Package: |
+  - package: |
       zip ziege-windows-x86_64.zip -j _windows/x86_64/bin/ziege.exe scripts/zig.bat scripts/zls.bat
       cp _linux/x86_64/bin/ziege ziege-linux-x86_64
       cp _linux/aarch64/bin/ziege ziege-linux-aarch64
