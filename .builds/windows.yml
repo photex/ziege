@@ -18,4 +18,5 @@ tasks:
       ../zig/zig build -Doptimize=ReleaseFast -Dtarget=x86_64-windows -Dcpu=x86_64+avx
 
   - package: |
+      cd ziege
       zip ziege-windows-x86_64.zip -j zig-out/bin/ziege.exe scripts/zig.bat scripts/zls.bat
