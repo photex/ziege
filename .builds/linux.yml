@@ -20,6 +20,5 @@ tasks:
       ../zig/zig build -Doptimize=ReleaseFast -Dtarget=aarch64-linux -p _build/aarch64
 
   - package: |
-      cd ziege
-      cp _build/x86_64/bin/ziege ziege-linux-x86_64
-      cp _build/aarch64/bin/ziege ziege-linux-aarch64
+      cp ziege/_build/x86_64/bin/ziege ziege-linux-x86_64
+      cp ziege/_build/aarch64/bin/ziege ziege-linux-aarch64
