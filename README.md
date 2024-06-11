@@ -39,13 +39,14 @@ Ziege is still in it's very early stagess but can hopefully be as useful for you
 Download a binary for your platform from one of the [releases](https://github.com/photex/ziege/releases) and place it somewhere in PATH.
 
 ```sh
-wget https://github.com/photex/ziege/releases/download/v0.1.0/ziege-linux-x86_64 -O ziege
+wget https://github.com/photex/ziege/releases/download/v0.3.0/ziege-linux-x86_64 -O ziege
 ```
 
-Make a symlink or a copy named `zig`.
+Make a symlink or a copy named `zig` and `zls`.
 
 ```sh
 ln -s ziege zig
+ln -s ziege zls
 ```
 
 And now you can use Zig as you normally would with the benefit of having toolchains automatically downloaded for you.
@@ -108,11 +109,21 @@ When using `set-version` to update your .zigversion file, the specified toolchai
 
 ## How it works
 
-When you run Ziege, it searches for a `.zigversion` file in the current working directory. If that is found the contents are read and used to locate an appropriate toolchain. In the event that no version file is present in the repo yet, Ziege will resolve the latest nightly and create a `.zigversion` for you.
+When you run Ziege, it searches for a `.zigversion` file in the current working directory. If that is found the contents are read and used to locate an appropriate toolchain. In the event that no version file is present in the repo yet, Ziege will resolve the latest nightly and use that version.
+
+In addition to reading the desired version from a .zigversion file, you can use "launcher args" to set the version as well. Launcher args start with '+' and are not passed to Zig or Zls. `+version=X` will override a .zigversion file.
+
+Finally, you can use the environment variable ZIG_VERSION. 
+
+The precedence for setting the zig version is:
+
+- Environment
+- Launcher args
+- .zigversion
 
 If a toolchain matching the specified version isn't present on your system already, then it will be downloaded and unpacked into a standard location.
 
-Once a toolchain is located, run Zig and forward any command line arguments to it.
+Once a toolchain is located, Ziege will run the tool it's proxying and forward any command line arguments that didn't start with '+' to it.
 
 ### Where do we store toolchains?
 
