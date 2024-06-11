@@ -4,10 +4,13 @@
 		{
 			"path": ".",
 			"folder_exclude_patterns": [
-				"zig-cache"
+				"zig-cache",
+				".zig-cache",
+				"zig-out",
+				".vscode",
+				"_release"
 			],
 			"index_exclude_patterns": [
-				"zig-out"
 			]
 		}
 	],
