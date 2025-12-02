@@ -14,10 +14,10 @@ This tool was inspired by [Bazelisk](https://github.com/bazelbuild/bazelisk).
 Ziege is still in it's very early stagess but can hopefully be as useful for you as it is for me. Bug reports, feature requests, or any other sort of contribution are all greatly appreciated.
 
 - [x] Download Zig toolchain indicated by a project `.zigversion`.
-- [ ] Works on major desktop platforms.
+- [x] Works on major desktop platforms.
   - [x] Windows
   - [x] Linux
-  - [ ] MacOS (*Not yet tested. Help appreciated!*)
+  - [x] MacOS (*Not yet tested. Help appreciated!*)
 - [ ] Works on more esoteric platforms.
   - [ ] Haiku :D
 - [x] Simple proxy for Zig.
@@ -32,7 +32,6 @@ Ziege is still in it's very early stagess but can hopefully be as useful for you
 - [ ] Allow configuration of alternate Zig and Zls indexes.
 - [ ] Allow configuration of the location of Zig toolchains.
 - [ ] Add symlinks in a repo (ex: `<repo>/tools/zig`) for folks that do not wish to use Ziege as a proxy.
-- [ ] Be your one stop shop for all your Zig tool needs!
 
 ## Installing
 
