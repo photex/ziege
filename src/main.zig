@@ -55,12 +55,11 @@ const Args = struct {
             else => .Ziege,
         };
 
-        var launcher_args_list = ArgList.init(allocator);
-        defer launcher_args_list.deinit();
-        try launcher_args_list.ensureTotalCapacity(args.len);
+        var launcher_args_list = try ArgList.initCapacity(allocator, args.len);
+        defer launcher_args_list.deinit(allocator);
 
-        var tool_args = ArgList.init(allocator);
-        try tool_args.ensureTotalCapacity(args.len);
+        var tool_args = try ArgList.initCapacity(allocator, args.len);
+        defer tool_args.deinit(allocator);
 
         // When we aren't running in 'ziege' mode, args that start with '+' are filtered and used
         // by the launcher. This will allow us to override zig versions, and perhaps some other
@@ -79,10 +78,10 @@ const Args = struct {
                 } else if (std.mem.eql(u8, "+zls", arg)) {
                     mode = .Zls;
                 } else {
-                    try launcher_args_list.append(copy);
+                    try launcher_args_list.append(allocator, copy);
                 }
             } else {
-                try tool_args.append(copy);
+                try tool_args.append(allocator, copy);
             }
         }
 
@@ -106,8 +105,8 @@ const Args = struct {
                 crc("+version") => {
                     const val = entry.next();
                     if (val == null) {
-                        const stderr = std.io.getStdErr().writer();
-                        try stderr.print("Version override requires an argument! Example: +version=0.12.0\n", .{});
+                        var stderr = std.fs.File.stderr().writer(&.{});
+                        try stderr.interface.print("Version override requires an argument! Example: +version=0.12.0\n", .{});
                         std.process.exit(1);
                     }
                     try map.put(LauncherArg.UseVersion, try map.allocator.dupe(u8, val.?));
@@ -115,8 +114,8 @@ const Args = struct {
                 crc("+set-version") => {
                     const val = entry.next();
                     if (val == null) {
-                        const stderr = std.io.getStdErr().writer();
-                        try stderr.print("Setting the version requires an argument! Example: +set-version=0.12.0\n", .{});
+                        var stderr = std.fs.File.stderr().writer(&.{});
+                        try stderr.interface.print("Setting the version requires an argument! Example: +set-version=0.12.0\n", .{});
                         std.process.exit(1);
                     }
                     try map.put(LauncherArg.SetVersion, try map.allocator.dupe(u8, val.?));
@@ -258,11 +257,11 @@ const USAGE = "Usage: ziege [list | add <version> | remove <version> | set-versi
 pub fn ziege(args: *Args, config: *Configuration) !void {
     log.debug("Running in Ziege mode.", .{});
 
-    const stdout = std.io.getStdOut().writer();
-    const stderr = std.io.getStdErr().writer();
+    var stdout = std.fs.File.stdout().writer(&.{});
+    var stderr = std.fs.File.stderr().writer(&.{});
 
     if (args.process_args.len == 1) {
-        try stdout.print("{s}", .{USAGE});
+        try stdout.interface.print("{s}", .{USAGE});
         std.process.exit(1);
     }
 
@@ -277,20 +276,20 @@ pub fn ziege(args: *Args, config: *Configuration) !void {
             var iter = pkg_dir.iterate();
             while (try iter.next()) |entry| {
                 if (entry.kind == .directory) {
-                    try stdout.print("{s}\n", .{entry.name});
+                    try stdout.interface.print("{s}\n", .{entry.name});
                 }
             }
         },
         crc("add") => {
             if (args.process_args.len != 3) {
-                try stderr.print("No version specified!\nUsage: ziege add <version>\n", .{});
+                try stderr.interface.print("No version specified!\nUsage: ziege add <version>\n", .{});
                 std.process.exit(1);
             }
             const zig_version = args.process_args[2];
 
             const zig_root_path = try config.locations.getZigRootPath(zig_version);
             if (try utils.dirExists(zig_root_path)) {
-                try stderr.print("Zig {s} is already installed.\n", .{zig_version});
+                try stderr.interface.print("Zig {s} is already installed.\n", .{zig_version});
                 std.process.exit(1);
             }
 
@@ -298,13 +297,13 @@ pub fn ziege(args: *Args, config: *Configuration) !void {
         },
         crc("remove") => {
             if (args.process_args.len != 3) {
-                try stderr.print("No version specified!\nUsage: ziege remove <version>\n", .{});
+                try stderr.interface.print("No version specified!\nUsage: ziege remove <version>\n", .{});
                 std.process.exit(1);
             }
             const zig_version = args.process_args[2];
             const zig_root_path = try config.locations.getZigRootPath(zig_version);
             if (!try utils.dirExists(zig_root_path)) {
-                try stderr.print("Zig {s} is not installed!\n", .{zig_version});
+                try stderr.interface.print("Zig {s} is not installed!\n", .{zig_version});
                 std.process.exit(1);
             }
 
@@ -312,7 +311,7 @@ pub fn ziege(args: *Args, config: *Configuration) !void {
         },
         crc("set-version") => {
             if (args.process_args.len != 3) {
-                try stderr.print("No version specified!\nUsage: ziege set-version <version>\n", .{});
+                try stderr.interface.print("No version specified!\nUsage: ziege set-version <version>\n", .{});
                 std.process.exit(1);
             }
             var zig_version: []const u8 = args.process_args[2];
@@ -326,18 +325,18 @@ pub fn ziege(args: *Args, config: *Configuration) !void {
             try saveZigVersion(zig_version);
         },
         crc("version") => {
-            try stdout.print("{s}\n", .{VERSION});
+            try stdout.interface.print("{s}\n", .{VERSION});
         },
         crc("update") => {
             try releases.updateIndex();
         },
         crc("home") => {
-            try stdout.print("{s}\n", .{config.locations.app_data});
+            try stdout.interface.print("{s}\n", .{config.locations.app_data});
         },
         crc("path"), crc("zig-path") => {
             const zig_version = try zigVersion(args, config);
             const zig_root_path = try config.locations.getZigRootPath(zig_version);
-            try stdout.print("{s}\n", .{zig_root_path});
+            try stdout.interface.print("{s}\n", .{zig_root_path});
         },
         crc("help") => {
             const help_msg =
@@ -352,10 +351,10 @@ pub fn ziege(args: *Args, config: *Configuration) !void {
                 \\    home - Print the path to the ziege app data directory
                 \\    path | zig-path - Print the path to the resolved Zig toolchain
             ;
-            try stdout.print("Ziege v{s}\n{s}\n\n", .{ VERSION, help_msg });
+            try stdout.interface.print("Ziege v{s}\n{s}\n\n", .{ VERSION, help_msg });
         },
         else => {
-            try stdout.print("{s}\n", .{USAGE});
+            try stdout.interface.print("{s}\n", .{USAGE});
             std.process.exit(1);
         },
     }
